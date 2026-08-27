@@ -11,6 +11,7 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderDriverKind,
+  ProviderExecutionLocality,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -26,12 +27,17 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+export type ProviderAttachmentMode = "local-path" | "upload";
 
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /** How attachments become visible to the provider runtime. */
+  readonly attachmentMode?: ProviderAttachmentMode;
+  /** Absent defaults to `"local"` for legacy adapters. */
+  readonly execution?: ProviderExecutionLocality;
 }
 
 export interface ProviderThreadTurnSnapshot {

@@ -94,7 +94,11 @@ The live backend agent implementation and its event stream. The main service is 
 
 #### Provider
 
-The backend agent runtime that actually performs work. Five drivers ship built in: Codex, Claude, Cursor, Grok, and OpenCode. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
+The backend agent runtime that actually performs work. Six drivers ship built in: Codex, Claude, Cursor, Grok, OpenCode, and PostHog Cloud. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
+
+#### Execution locality
+
+Where a provider's agent process and its filesystem live, declared by the provider as `execution: "local" | "remote"` (absent means local). A `remote` provider owns its own sandbox, so a thread bound to it has no local workspace: no terminal, diff, files, git controls, checkpoints, or workspace-relative paths, and its run outlives the local session. Clients gate all of those on this one field rather than on the driver's name. See the snapshot field in [the server contracts][25] and the adapter capability in [ProviderAdapter.ts][15].
 
 #### Session
 
@@ -179,3 +183,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../packages/contracts/src/server.ts

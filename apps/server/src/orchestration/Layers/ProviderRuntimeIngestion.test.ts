@@ -1062,6 +1062,63 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("projects cross-surface provider user messages without duplicating a recent local echo", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-external-user-message"),
+      provider: ProviderDriverKind.make("posthogCloud"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-external-user"),
+      itemId: asItemId("external-user-message"),
+      payload: {
+        itemType: "user_message",
+        status: "completed",
+        detail: "sent from another surface",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "provider-user:external-user-message",
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "provider-user:external-user-message",
+    );
+    expect(message?.role).toBe("user");
+    expect(message?.text).toBe("sent from another surface");
+    expect(message?.turnId).toBe("turn-external-user");
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-local-user-echo"),
+      provider: ProviderDriverKind.make("posthogCloud"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-external-user"),
+      itemId: asItemId("local-user-echo"),
+      payload: {
+        itemType: "user_message",
+        status: "completed",
+        detail: "sent from another surface",
+      },
+    });
+    await harness.drain();
+    const afterEcho = await harness.readModel();
+    const afterEchoThread = afterEcho.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(
+      afterEchoThread?.messages.filter(
+        (entry: ProviderRuntimeTestMessage) =>
+          entry.role === "user" && entry.text === "sent from another surface",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("preserves completed tool metadata on projected tool activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -2868,6 +2925,12 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
       payload: {
         name: "Renamed by provider",
+        branch: "posthog/cloud-task",
+        pullRequest: {
+          repository: "posthog/t3code",
+          number: 42,
+          url: "https://github.com/posthog/t3code/pull/42",
+        },
         metadata: { source: "provider" },
       },
     });
@@ -2935,6 +2998,7 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (entry) =>
         entry.title === "Thread" &&
+        entry.branch === "posthog/cloud-task" &&
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "turn.plan.updated",
         ) &&
@@ -2950,6 +3014,12 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     expect(thread.title).toBe("Thread");
+    expect(thread.linkedPullRequest).toEqual({
+      projectId: "project-1",
+      repository: "posthog/t3code",
+      number: 42,
+      url: "https://github.com/posthog/t3code/pull/42",
+    });
 
     const planActivity = thread.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-turn-plan-updated",

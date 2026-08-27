@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import type {
   ProviderApprovalDecision,
+  ProviderExecutionLocality,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
@@ -14,11 +15,11 @@ import type {
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
-  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  RuntimeTaskId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -45,7 +46,7 @@ import {
   ProviderValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type { ProviderAdapterShape, ProviderAttachmentMode } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -74,9 +75,11 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
+const posthogCloudInstanceId = ProviderInstanceId.make("posthogCloud");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const POSTHOG_CLOUD_DRIVER = ProviderDriverKind.make("posthogCloud");
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -91,7 +94,13 @@ type LegacyProviderRuntimeEvent = {
   readonly [key: string]: unknown;
 };
 
-function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
+function makeFakeCodexAdapter(
+  provider: ProviderDriverKind = CODEX_DRIVER,
+  options?: {
+    readonly execution?: ProviderExecutionLocality;
+    readonly attachmentMode?: ProviderAttachmentMode;
+  },
+) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
@@ -109,6 +118,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
         resumeCursor: input.resumeCursor ?? {
           opaque: `resume-${String(input.threadId)}`,
         },
+        ...(input.runtimePayload !== undefined ? { runtimePayload: input.runtimePayload } : {}),
         cwd: input.cwd ?? process.cwd(),
         createdAt: now,
         updatedAt: now,
@@ -217,6 +227,8 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      ...(options?.execution ? { execution: options.execution } : {}),
+      ...(options?.attachmentMode ? { attachmentMode: options.attachmentMode } : {}),
     },
     startSession,
     sendTurn,
@@ -287,10 +299,15 @@ function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
+  const remote = makeFakeCodexAdapter(POSTHOG_CLOUD_DRIVER, {
+    execution: "remote",
+    attachmentMode: "upload",
+  });
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
     [ProviderDriverKind.make("cursor")]: cursor.adapter,
+    [ProviderDriverKind.make("posthogCloud")]: remote.adapter,
   });
 
   const providerAdapterLayer = Layer.succeed(
@@ -328,6 +345,7 @@ function makeProviderServiceLayer() {
     codex,
     claude,
     cursor,
+    remote,
     layer,
   };
 }
@@ -1145,7 +1163,28 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const imageOnlyInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
       assert.equal(imageOnlyInput.input?.startsWith('[Attached image "screenshot.png"'), true);
 
+      const remoteSession = yield* provider.startSession(asThreadId("thread-remote-attach"), {
+        provider: POSTHOG_CLOUD_DRIVER,
+        providerInstanceId: posthogCloudInstanceId,
+        threadId: asThreadId("thread-remote-attach"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      routing.remote.sendTurn.mockClear();
+      yield* provider.sendTurn({
+        threadId: remoteSession.threadId,
+        input: "use this screenshot",
+        attachments: [attachment],
+      });
+      const remoteInput = routing.remote.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.equal(remoteInput.input, "use this screenshot");
+      assert.equal(
+        remoteInput.resolvedAttachments?.[0]?.path.endsWith(`${attachment.id}.png`),
+        true,
+      );
+
       yield* provider.stopSession({ threadId: session.threadId });
+      yield* provider.stopSession({ threadId: remoteSession.threadId });
     }),
   );
 
@@ -1505,7 +1544,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("reuses persisted resume cursor when startSession is called after a restart", () =>
+  it.effect("reuses persisted resume identity when startSession is called after a restart", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-provider-service-start-"),
@@ -1546,6 +1585,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           providerInstanceId: claudeAgentInstanceId,
           threadId: asThreadId("thread-claude-start"),
           cwd: "/tmp/project-claude-start",
+          runtimePayload: { taskId: "cloud-task-1", repository: "posthog/t3code" },
           runtimeMode: "full-access",
         });
       }).pipe(Effect.provide(firstProviderLayer));
@@ -1599,11 +1639,20 @@ routing.layer("ProviderServiceLive routing", (it) => {
           provider?: string;
           cwd?: string;
           resumeCursor?: unknown;
+          runtimePayload?: unknown;
           threadId?: string;
         };
         assert.equal(startPayload.provider, "claudeAgent");
         assert.equal(startPayload.cwd, "/tmp/project-claude-start");
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
+        assert.equal(
+          (startPayload.runtimePayload as { taskId?: unknown } | undefined)?.taskId,
+          "cloud-task-1",
+        );
+        assert.equal(
+          (startPayload.runtimePayload as { repository?: unknown } | undefined)?.repository,
+          "posthog/t3code",
+        );
         assert.equal(startPayload.threadId, initial.threadId);
       }
 
@@ -1716,7 +1765,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
 const fanout = makeProviderServiceLayer();
 fanout.layer("ProviderServiceLive fanout", (it) => {
-  it.effect("fans out adapter turn completion events", () =>
+  it.effect("fans out runtime events and durably advances meaningful progress boundaries", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const session = yield* provider.startSession(asThreadId("thread-1"), {
@@ -1732,6 +1781,34 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       ).pipe(Effect.forkChild);
       yield* advanceTestClock(50);
 
+      const progressCursor = { runId: "run-1", lastEventId: "event-50" };
+      fanout.codex.updateSession(session.threadId, (current) => ({
+        ...current,
+        resumeCursor: progressCursor,
+      }));
+      fanout.codex.emit({
+        type: "task.progress",
+        eventId: asEventId("evt-progress"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: session.threadId,
+        payload: {
+          taskId: RuntimeTaskId.make("cloud-progress"),
+          description: "Cloning repository",
+          status: "running",
+        },
+      });
+      yield* advanceTestClock(50);
+
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const persistedProgress = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(persistedProgress), true);
+      if (Option.isSome(persistedProgress)) {
+        assert.deepEqual(persistedProgress.value.resumeCursor, progressCursor);
+      }
+
       const completedEvent: LegacyProviderRuntimeEvent = {
         type: "turn.completed",
         eventId: asEventId("evt-1"),
@@ -1742,6 +1819,13 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         status: "completed",
       };
 
+      const advancedCursor = { runId: "run-1", lastEventId: "event-99" };
+      fanout.codex.updateSession(session.threadId, (current) => ({
+        ...current,
+        status: "ready",
+        activeTurnId: undefined,
+        resumeCursor: advancedCursor,
+      }));
       fanout.codex.emit(completedEvent);
       yield* advanceTestClock(50);
 
@@ -1759,6 +1843,19 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         ),
         true,
       );
+      const persisted = yield* runtimeRepository.getByThreadId({ threadId: session.threadId });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        assert.deepEqual(persisted.value.resumeCursor, advancedCursor);
+        const payload = persisted.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          assert.equal(
+            (payload as { readonly lastRuntimeEvent?: string }).lastRuntimeEvent,
+            "turn.completed",
+          );
+        }
+      }
     }),
   );
 

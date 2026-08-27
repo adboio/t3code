@@ -65,6 +65,8 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as PostHogClient from "./posthog/PostHogClient.ts";
+import * as PostHogCloudClient from "./posthog/PostHogCloudClient.ts";
+import * as PostHogTransport from "./posthog/PostHogTransport.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -172,9 +174,12 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
 
 const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
 
-const PostHogClientLayerLive = PostHogClient.layer.pipe(
+const PostHogTransportLayerLive = PostHogTransport.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
   Layer.provide(ServerSecretStore.layer),
+);
+const PostHogClientsLayerLive = Layer.merge(PostHogClient.layer, PostHogCloudClient.layer).pipe(
+  Layer.provide(PostHogTransportLayerLive),
 );
 
 const ResourceDiagnosticsLayerLive = Layer.mergeAll(
@@ -395,7 +400,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(
+    ProviderInstanceRegistryHydrationLive.pipe(Layer.provideMerge(PostHogClientsLayerLive)),
+  ),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).
@@ -430,7 +437,6 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(UsageLayerLive),
-  Layer.provideMerge(PostHogClientLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),

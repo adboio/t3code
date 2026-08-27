@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  providerExecutesRemotely,
   ServerConfig,
   ServerProvider,
   ServerProviders,
@@ -114,6 +115,25 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.models[0]?.isLegacy).toBe(true);
+  });
+});
+
+describe("provider execution locality", () => {
+  const localSnapshot = decodeServerProvider(baseProviderSnapshot);
+  const remoteSnapshot = decodeServerProvider({
+    ...baseProviderSnapshot,
+    instanceId: "posthogCloud",
+    driver: "posthogCloud",
+    execution: "remote",
+  });
+
+  it("treats a snapshot without the field as local", () => {
+    expect(localSnapshot.execution).toBeUndefined();
+    expect(providerExecutesRemotely(localSnapshot)).toBe(false);
+  });
+
+  it("reads the declared locality", () => {
+    expect(providerExecutesRemotely(remoteSnapshot)).toBe(true);
   });
 });
 

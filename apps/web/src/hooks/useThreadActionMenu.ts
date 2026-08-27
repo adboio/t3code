@@ -27,6 +27,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
+  readThreadWorkspaceCapabilities,
   readThreadShell,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
@@ -76,6 +77,9 @@ export function useThreadActionMenu(input: {
     deleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
@@ -142,6 +146,7 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          canStopRun: readThreadWorkspaceCapabilities(thread).canStopSession,
           supports,
           snoozePresets,
         });
@@ -256,6 +261,22 @@ export function useThreadActionMenu(input: {
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
+          case "stop-run": {
+            const confirmation = await settlePromise(() =>
+              api.dialogs.confirm(
+                "Stop this run? This shuts down its sandbox. You can resume the thread in a new run.",
+                { variant: "destructive" },
+              ),
+            );
+            if (confirmation._tag === "Failure" || !confirmation.value) return;
+            await reportFailure("Failed to stop run", () =>
+              stopThreadSession({
+                environmentId: threadRef.environmentId,
+                input: { threadId: threadRef.threadId },
+              }),
+            );
+            return;
+          }
           case "archive": {
             if (confirmThreadArchive) {
               const confirmed = await settlePromise(() =>

@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
@@ -318,7 +319,6 @@ const make = Effect.gen(function* () {
     timeToLive: HANDLED_TURN_START_KEY_TTL,
     lookup: () => Effect.succeed(true),
   });
-
   const hasHandledTurnStartRecently = (key: string) =>
     Cache.getOption(handledTurnStartKeys, key).pipe(
       Effect.flatMap((cached) =>
@@ -652,6 +652,12 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+    const cloudRepository =
+      project?.repositoryIdentity?.provider === "github" &&
+      project.repositoryIdentity.owner &&
+      project.repositoryIdentity.name
+        ? `${project.repositoryIdentity.owner}/${project.repositoryIdentity.name}`
+        : undefined;
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
@@ -662,6 +668,8 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(cloudRepository ? { repository: cloudRepository } : {}),
+        ...(thread.reportId ? { reportId: thread.reportId } : {}),
         ...(thread.title ? { title: thread.title } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
@@ -771,10 +779,13 @@ const make = Effect.gen(function* () {
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly messageId: MessageId;
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly steer: boolean;
+    readonly targetTurnId?: TurnId;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -785,7 +796,7 @@ const make = Effect.gen(function* () {
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-      pendingTurnStart: true,
+      pendingTurnStart: !input.steer,
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
@@ -822,6 +833,9 @@ const make = Effect.gen(function* () {
 
     return {
       threadId: input.threadId,
+      messageId: input.messageId,
+      steer: input.steer,
+      ...(input.targetTurnId !== undefined ? { targetTurnId: input.targetTurnId } : {}),
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
@@ -1202,12 +1216,17 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
+      messageId: event.payload.messageId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
+      steer: event.payload.steer === true,
+      ...(event.payload.targetTurnId !== undefined
+        ? { targetTurnId: event.payload.targetTurnId }
+        : {}),
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),

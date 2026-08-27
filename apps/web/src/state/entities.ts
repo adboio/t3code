@@ -8,6 +8,7 @@ import {
   type EnvironmentThreadStatus,
   mergeEnvironmentThread,
 } from "@t3tools/client-runtime/state/threads";
+import { threadWorkspaceCapabilities } from "@t3tools/client-runtime/threadWorkspaceCapabilities";
 import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
@@ -266,6 +267,15 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadPinReorder === true
   );
+}
+
+export function readThreadWorkspaceCapabilities(thread: EnvironmentThreadShell) {
+  return threadWorkspaceCapabilities({
+    providers: appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)
+      ?.providers,
+    providerInstanceId: thread.modelSelection.instanceId,
+    session: thread.session,
+  });
 }
 
 export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {

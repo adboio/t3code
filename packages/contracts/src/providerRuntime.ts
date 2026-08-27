@@ -304,6 +304,14 @@ export type ThreadStateChangedPayload = typeof ThreadStateChangedPayload.Type;
 
 const ThreadMetadataUpdatedPayload = Schema.Struct({
   name: Schema.optional(TrimmedNonEmptyStringSchema),
+  branch: Schema.optional(TrimmedNonEmptyStringSchema),
+  pullRequest: Schema.optional(
+    Schema.Struct({
+      repository: TrimmedNonEmptyStringSchema,
+      number: PositiveInt,
+      url: TrimmedNonEmptyStringSchema,
+    }),
+  ),
   metadata: Schema.optional(UnknownRecordSchema),
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;
@@ -517,8 +525,7 @@ export const MONITOR_TASK_TYPES: ReadonlySet<string> = new Set([
   "local_bash",
   "shell",
 ]);
-/** Task types that are neither agents nor watch loops (plan-mode bookkeeping). */
-export const INERT_TASK_TYPES: ReadonlySet<string> = new Set(["plan", "dream"]);
+export const INERT_TASK_TYPES: ReadonlySet<string> = new Set(["plan", "dream", "provider_setup"]);
 
 /**
  * Agent-vs-background classification, stamped by ingestion as `agentKind` so

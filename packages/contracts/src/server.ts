@@ -121,6 +121,10 @@ export const ServerProviderContinuation = Schema.Struct({
 });
 export type ServerProviderContinuation = typeof ServerProviderContinuation.Type;
 
+/** Omitted legacy snapshots are local; remote providers own their sandbox. */
+export const ProviderExecutionLocality = Schema.Literals(["local", "remote"]);
+export type ProviderExecutionLocality = typeof ProviderExecutionLocality.Type;
+
 export const ServerProviderVersionAdvisoryStatus = Schema.Literals([
   "unknown",
   "current",
@@ -171,6 +175,7 @@ export const ServerProvider = Schema.Struct({
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  execution: Schema.optional(ProviderExecutionLocality),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
@@ -212,6 +217,10 @@ export type ServerProviders = typeof ServerProviders.Type;
  */
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
+
+/** Absent `execution` means the provider runs locally. */
+export const providerExecutesRemotely = (snapshot: ServerProvider): boolean =>
+  snapshot.execution === "remote";
 
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,

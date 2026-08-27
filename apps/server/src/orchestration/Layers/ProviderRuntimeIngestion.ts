@@ -131,6 +131,23 @@ function sameId(left: string | null | undefined, right: string | null | undefine
   return left === right;
 }
 
+function hasMatchingRecentUserMessage(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  text: string,
+  createdAt: string,
+): boolean {
+  const eventTime = Date.parse(createdAt);
+  return messages.some((message) => {
+    if (message.role !== "user" || message.text !== text) return false;
+    const messageTime = Date.parse(message.createdAt);
+    return (
+      Number.isFinite(eventTime) &&
+      Number.isFinite(messageTime) &&
+      Math.abs(eventTime - messageTime) <= 30_000
+    );
+  });
+}
+
 function hasAssistantMessageForTurn(
   messages: ReadonlyArray<OrchestrationMessage>,
   turnId: TurnId,
@@ -1769,6 +1786,15 @@ const make = Effect.gen(function* () {
               fallbackText: event.payload.detail,
             }
           : undefined;
+      const userMessageCompletion =
+        event.type === "item.completed" &&
+        event.payload.itemType === "user_message" &&
+        event.payload.detail?.trim()
+          ? {
+              messageId: MessageId.make(`provider-user:${event.itemId ?? event.eventId}`),
+              text: event.payload.detail.trim(),
+            }
+          : undefined;
       const proposedPlanCompletion =
         event.type === "turn.proposed.completed"
           ? {
@@ -1777,6 +1803,28 @@ const make = Effect.gen(function* () {
               planMarkdown: event.payload.planMarkdown,
             }
           : undefined;
+
+      if (userMessageCompletion) {
+        const detailedThread = yield* getLoadedThreadDetail();
+        if (
+          !hasMatchingRecentUserMessage(
+            detailedThread?.messages ?? [],
+            userMessageCompletion.text,
+            now,
+          )
+        ) {
+          const turnId = toTurnId(event.turnId);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.message.user.append",
+            commandId: yield* providerCommandId(event, "user-message-append"),
+            threadId: thread.id,
+            messageId: userMessageCompletion.messageId,
+            text: userMessageCompletion.text,
+            ...(turnId ? { turnId } : {}),
+            createdAt: now,
+          });
+        }
+      }
 
       if (assistantCompletion) {
         const detailedThread = yield* getLoadedThreadDetail();
@@ -1912,13 +1960,22 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "thread.metadata.updated" && event.payload.name) {
-        if (canReplaceThreadTitle(thread.title)) {
+      if (event.type === "thread.metadata.updated") {
+        const title =
+          event.payload.name && canReplaceThreadTitle(thread.title)
+            ? event.payload.name
+            : undefined;
+        const linkedPullRequest = event.payload.pullRequest
+          ? { projectId: thread.projectId, ...event.payload.pullRequest }
+          : undefined;
+        if (title || event.payload.branch || linkedPullRequest) {
           yield* orchestrationEngine.dispatch({
             type: "thread.meta.update",
             commandId: yield* providerCommandId(event, "thread-meta-update"),
             threadId: thread.id,
-            title: event.payload.name,
+            ...(title ? { title } : {}),
+            ...(event.payload.branch ? { branch: event.payload.branch } : {}),
+            ...(linkedPullRequest ? { linkedPullRequest } : {}),
           });
         }
       }

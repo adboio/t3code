@@ -1,4 +1,4 @@
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
   useFocusEffect,
@@ -6,19 +6,22 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { threadWorkspaceCapabilities } from "@t3tools/client-runtime/threadWorkspaceCapabilities";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
+import { environmentServerConfigsAtom } from "../../state/server";
 
 import { EmptyState } from "../../components/EmptyState";
 import {
@@ -192,6 +195,13 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const workspaceCapabilities = threadWorkspaceCapabilities({
+    providers: selectedThread ? serverConfigs.get(selectedThread.environmentId)?.providers : null,
+    providerInstanceId: selectedThread?.modelSelection.instanceId,
+    session: selectedThread?.session,
+  });
+  const { hasLocalWorkspace, runsRemotely: threadRunsRemotely } = workspaceCapabilities;
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -214,6 +224,7 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "Cloud run stop");
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -226,6 +237,9 @@ function ThreadRouteContent(
   );
   const inspectorMode = (() => {
     if (inspectorSelection?.routeThreadIdentity === routeThreadIdentity) {
+      if (threadRunsRemotely && inspectorSelection.mode !== "route") {
+        return null;
+      }
       if (inspectorSelection.mode === "files" && selectedThreadCwd === null) {
         return null;
       }
@@ -236,7 +250,7 @@ function ThreadRouteContent(
   useEffect(() => {
     if (
       fileInspector.supported &&
-      selectedThreadCwd === null &&
+      (selectedThreadCwd === null || threadRunsRemotely) &&
       inspectorMode === null &&
       panes.auxiliaryPaneVisible
     ) {
@@ -245,6 +259,7 @@ function ThreadRouteContent(
   }, [
     fileInspector.supported,
     inspectorMode,
+    threadRunsRemotely,
     panes.auxiliaryPaneVisible,
     selectedThreadCwd,
     toggleAuxiliaryPane,
@@ -496,6 +511,27 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
+  const canStopRemoteRun = workspaceCapabilities.canStopSession;
+  const handleStopRemoteRun = useCallback(() => {
+    if (!selectedThread || !canStopRemoteRun) return;
+    Alert.alert(
+      "Stop run?",
+      "This shuts down its sandbox. You can resume the thread in a new run.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Stop run",
+          style: "destructive",
+          onPress: () => {
+            void stopThreadSession({
+              environmentId: selectedThread.environmentId,
+              input: { threadId: selectedThread.id },
+            });
+          },
+        },
+      ],
+    );
+  }, [canStopRemoteRun, selectedThread, stopThreadSession]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -612,23 +648,29 @@ function ThreadRouteContent(
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
     auxiliaryPaneControl:
-      !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
+      hasLocalWorkspace &&
+      !layout.usesSplitView &&
+      fileInspector.supported &&
+      selectedThreadCwd !== null
         ? {
             accessibilityLabel: "Toggle inspector",
             onPress: handleToggleInspector,
           }
         : undefined,
     onOpenFilesInspector:
-      fileInspector.supported && selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: fileInspector.supported ? handleOpenGitInspector : undefined,
-    currentBranch: selectedThread?.branch ?? null,
+      hasLocalWorkspace && fileInspector.supported && selectedThreadCwd !== null
+        ? handleOpenFilesInspector
+        : undefined,
+    onOpenGitInspector:
+      hasLocalWorkspace && fileInspector.supported ? handleOpenGitInspector : undefined,
+    currentBranch: hasLocalWorkspace ? (selectedThread?.branch ?? null) : null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(selectedThreadProject?.workspaceRoot),
-    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: selectedThreadProject?.scripts ?? [],
-    terminalSessions: terminalMenuSessions,
-    showDirectFileControl: layout.usesSplitView,
+    canOpenTerminal: hasLocalWorkspace && Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenFiles: hasLocalWorkspace && Boolean(selectedThreadProject?.workspaceRoot),
+    projectScripts: hasLocalWorkspace ? (selectedThreadProject?.scripts ?? []) : [],
+    terminalSessions: hasLocalWorkspace ? terminalMenuSessions : [],
+    showDirectFileControl: hasLocalWorkspace && layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
@@ -637,6 +679,21 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const cloudRunHeaderItems = useMemo<NativeHeaderItems>(
+    () =>
+      canStopRemoteRun
+        ? [
+            withNativeGlassHeaderItem({
+              accessibilityLabel: "Stop run",
+              icon: { name: "stop.fill", type: "sfSymbol" as const },
+              identifier: "thread-cloud-stop-run",
+              onPress: handleStopRemoteRun,
+              type: "button" as const,
+            }),
+          ]
+        : [],
+    [canStopRemoteRun, handleStopRemoteRun],
+  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -689,6 +746,16 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
+    if (threadRunsRemotely) {
+      if (canStopRemoteRun) {
+        actions.push({
+          accessibilityLabel: "Stop run",
+          icon: "stop",
+          onPress: handleStopRemoteRun,
+        });
+      }
+      return actions;
+    }
     if (selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Open files",
@@ -717,11 +784,14 @@ function ThreadRouteContent(
     }
     return actions;
   }, [
+    canStopRemoteRun,
     fileInspector.supported,
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
+    handleStopRemoteRun,
     handleToggleInspector,
+    threadRunsRemotely,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
@@ -761,9 +831,24 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
-      <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      {threadRunsRemotely ? (
+        showActionControls && canStopRemoteRun ? (
+          <NativeHeaderToolbar placement="right">
+            <NativeHeaderToolbar.Button
+              accessibilityLabel="Stop run"
+              icon="stop.fill"
+              onPress={handleStopRemoteRun}
+              separateBackground
+            />
+          </NativeHeaderToolbar>
+        ) : null
+      ) : (
+        <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      )}
 
-      <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
+      {hasLocalWorkspace ? (
+        <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
+      ) : null}
 
       <View className="flex-1 bg-screen">
         <ThreadDetailScreen
@@ -786,8 +871,10 @@ function ThreadRouteContent(
           threadSyncStatus={selectedThreadDetailState.status}
           loadEarlier={loadEarlierTurns}
           environmentId={selectedThread.environmentId}
-          projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
-          threadCwd={selectedThreadCwd}
+          projectWorkspaceRoot={
+            hasLocalWorkspace ? (selectedThreadProject?.workspaceRoot ?? null) : null
+          }
+          threadCwd={hasLocalWorkspace ? selectedThreadCwd : null}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
@@ -845,7 +932,12 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () =>
+                  threadRunsRemotely
+                    ? cloudRunHeaderItems
+                    : layout.usesSplitView
+                      ? threadCenterHeaderItems
+                      : compactRightHeaderItems
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
         }}

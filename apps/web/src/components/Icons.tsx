@@ -1,3 +1,4 @@
+import { Logo } from "@posthog/brand/logo";
 import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
 
@@ -664,6 +665,11 @@ export const OpenCodeIcon: Icon = (props) => (
       </clipPath>
     </defs>
   </svg>
+);
+
+export const PostHogIcon: Icon = ({ className, color: _color, ...props }) => (
+  // The gradient ignores color, so omit it rather than passing undefined under exactOptionalPropertyTypes.
+  <Logo {...props} layout="logomark" className={cn("shrink-0", className)} />
 );
 
 export const GithubCopilotIcon: Icon = ({ className, ...props }) => (

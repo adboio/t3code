@@ -2548,6 +2548,44 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
   "OrchestrationProjectionPipeline pending turn cleanup",
   (it) => {
+    it.effect("does not record a pending turn start for a steer message", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-steer-no-pending");
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-steer-no-pending"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T14:00:00.000Z",
+          commandId: CommandId.make("cmd-steer-no-pending"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-steer-no-pending"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-steer-no-pending"),
+            steer: true,
+            targetTurnId: TurnId.make("turn-already-running"),
+            runtimeMode: "approval-required",
+            createdAt: "2026-02-26T14:00:00.000Z",
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const pendingRows = yield* sql<{ readonly threadId: string }>`
+          SELECT thread_id AS "threadId"
+          FROM projection_turns
+          WHERE thread_id = 'thread-steer-no-pending'
+        `;
+        assert.deepEqual(pendingRows, []);
+      }),
+    );
+
     it.effect("clears pending turn starts when startup reaches a terminal session state", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;

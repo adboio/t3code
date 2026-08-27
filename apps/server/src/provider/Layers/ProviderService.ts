@@ -24,8 +24,10 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type TurnId,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -136,14 +138,22 @@ function toRuntimePayloadFromSession(
   session: ProviderSession,
   extra?: {
     readonly modelSelection?: unknown;
+    readonly activeTurnId?: TurnId;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
   },
 ): Record<string, unknown> {
+  const providerPayload =
+    session.runtimePayload !== null &&
+    typeof session.runtimePayload === "object" &&
+    !Array.isArray(session.runtimePayload)
+      ? session.runtimePayload
+      : {};
   return {
+    ...providerPayload,
     cwd: session.cwd ?? null,
     model: session.model ?? null,
-    activeTurnId: session.activeTurnId ?? null,
+    activeTurnId: extra?.activeTurnId ?? session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
     ...(extra?.lastRuntimeEvent !== undefined ? { lastRuntimeEvent: extra.lastRuntimeEvent } : {}),
@@ -337,6 +347,28 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  const persistRuntimeProgress = Effect.fn("ProviderService.persistRuntimeProgress")(function* (
+    source: { readonly instanceId: ProviderInstanceId },
+    event: ProviderRuntimeEvent,
+  ) {
+    if (event.type === "content.delta" || event.type === "thread.token-usage.updated") {
+      return;
+    }
+    const adapter = yield* registry.getByInstance(source.instanceId);
+    const session = (yield* adapter.listSessions()).find(
+      (candidate) => candidate.threadId === event.threadId,
+    );
+    if (!session) return;
+    yield* upsertSessionBinding(
+      { ...session, providerInstanceId: source.instanceId },
+      event.threadId,
+      {
+        lastRuntimeEvent: event.type,
+        lastRuntimeEventAt: event.createdAt,
+      },
+    );
+  });
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
@@ -349,7 +381,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          Effect.andThen(
+            persistRuntimeProgress(source, canonicalEvent).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("failed to persist provider runtime progress", {
+                  threadId: canonicalEvent.threadId,
+                  eventType: canonicalEvent.type,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            ),
+          ),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+        ),
       ),
     );
 
@@ -461,6 +506,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           providerInstanceId: bindingInstanceId,
           ...(persistedCwd ? { cwd: persistedCwd } : {}),
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+          ...(input.binding.runtimePayload !== null
+            ? { runtimePayload: input.binding.runtimePayload }
+            : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
         })
@@ -624,6 +672,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           (persistedBinding?.providerInstanceId === resolvedInstanceId
             ? persistedBinding.resumeCursor
             : undefined);
+        const effectiveRuntimePayload =
+          input.runtimePayload ??
+          (persistedBinding?.providerInstanceId === resolvedInstanceId
+            ? persistedBinding.runtimePayload
+            : undefined);
         const effectiveCwd =
           input.cwd ??
           (persistedBinding?.providerInstanceId === resolvedInstanceId
@@ -655,6 +708,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             ...input,
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
+            ...(effectiveRuntimePayload !== undefined && effectiveRuntimePayload !== null
+              ? { runtimePayload: effectiveRuntimePayload }
+              : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
           })
           .pipe(Effect.onError(() => clearMcpSession(threadId)));
@@ -736,29 +792,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     // PROVIDER_SEND_TURN_MAX_INPUT_CHARS check; attachment count is capped, so
     // the overhead is bounded. Unresolvable ids are skipped here and surface
     // as adapter errors when the file is read for inlining.
-    const attachmentPathLines = attachments.flatMap((attachment) => {
-      const attachmentPath = resolveAttachmentPath({
+    const resolvedAttachments = attachments.flatMap((attachment) => {
+      const path = resolveAttachmentPath({
         attachmentsDir: serverConfig.attachmentsDir,
         attachment,
       });
-      return attachmentPath === null
-        ? []
-        : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
+      return path === null ? [] : [{ ...attachment, path }];
     });
-    const inputTextWithAttachmentPaths =
-      attachmentPathLines.length === 0
-        ? parsed.input
-        : [parsed.input, attachmentPathLines.join("\n")]
-            .filter((part): part is string => typeof part === "string" && part.length > 0)
-            .join("\n\n");
-
-    const input = {
-      ...parsed,
-      ...(inputTextWithAttachmentPaths !== undefined
-        ? { input: inputTextWithAttachmentPaths }
-        : {}),
-      attachments,
-    };
+    const input = { ...parsed, attachments, resolvedAttachments };
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "send-turn",
       "provider.thread_id": input.threadId,
@@ -779,25 +820,53 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
       });
+      const attachmentPathLines = resolvedAttachments.map(
+        (attachment) =>
+          `[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachment.path}]`,
+      );
+      const localInput =
+        attachmentPathLines.length === 0
+          ? parsed.input
+          : [parsed.input, attachmentPathLines.join("\n")]
+              .filter((part): part is string => typeof part === "string" && part.length > 0)
+              .join("\n\n");
+      const adapterInput =
+        routed.adapter.capabilities.attachmentMode === "upload"
+          ? input
+          : { ...input, ...(localInput !== undefined ? { input: localInput } : {}) };
       // A turn is the clearest sign a session is still alive. The MCP
       // credential is minted once at session start and cannot be rotated into
       // an already-spawned agent process, so we keep the existing token valid
       // rather than issuing a new one: sessions that go a long time between
       // browser tool calls used to lose the toolkit outright.
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-      const turn = yield* routed.adapter.sendTurn(input);
+      const turn = yield* routed.adapter.sendTurn(adapterInput);
+      const activeSession = (yield* routed.adapter.listSessions()).find(
+        (session) => session.threadId === input.threadId,
+      );
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
         providerInstanceId: routed.instanceId,
         status: "running",
         ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-        runtimePayload: {
-          ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
-          lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: yield* nowIso,
-        },
+        runtimePayload: activeSession
+          ? toRuntimePayloadFromSession(activeSession, {
+              activeTurnId: turn.turnId,
+              ...(input.modelSelection !== undefined
+                ? { modelSelection: input.modelSelection }
+                : {}),
+              lastRuntimeEvent: "provider.sendTurn",
+              lastRuntimeEventAt: yield* nowIso,
+            })
+          : {
+              ...(input.modelSelection !== undefined
+                ? { modelSelection: input.modelSelection }
+                : {}),
+              activeTurnId: turn.turnId,
+              lastRuntimeEvent: "provider.sendTurn",
+              lastRuntimeEventAt: yield* nowIso,
+            },
       });
       yield* analytics.record("provider.turn.sent", {
         provider: routed.adapter.provider,
