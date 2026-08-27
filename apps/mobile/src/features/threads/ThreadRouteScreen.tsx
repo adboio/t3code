@@ -8,12 +8,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import {
-  EnvironmentId,
-  providerInstanceExecutesRemotely,
-  ThreadId,
-  type ProjectScript,
-} from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { threadWorkspaceCapabilities } from "@t3tools/client-runtime/threadWorkspaceCapabilities";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -200,10 +196,12 @@ function ThreadRouteContent(
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const threadRunsRemotely = providerInstanceExecutesRemotely(
-    selectedThread ? serverConfigs.get(selectedThread.environmentId)?.providers : null,
-    selectedThread?.modelSelection.instanceId,
-  );
+  const workspaceCapabilities = threadWorkspaceCapabilities({
+    providers: selectedThread ? serverConfigs.get(selectedThread.environmentId)?.providers : null,
+    providerInstanceId: selectedThread?.modelSelection.instanceId,
+    session: selectedThread?.session,
+  });
+  const { hasLocalWorkspace, runsRemotely: threadRunsRemotely } = workspaceCapabilities;
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -513,10 +511,7 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
-  const canStopRemoteRun =
-    threadRunsRemotely &&
-    selectedThread?.session != null &&
-    selectedThread.session.status !== "stopped";
+  const canStopRemoteRun = workspaceCapabilities.canStopSession;
   const handleStopRemoteRun = useCallback(() => {
     if (!selectedThread || !canStopRemoteRun) return;
     Alert.alert(
@@ -653,7 +648,7 @@ function ThreadRouteContent(
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
     auxiliaryPaneControl:
-      !threadRunsRemotely &&
+      hasLocalWorkspace &&
       !layout.usesSplitView &&
       fileInspector.supported &&
       selectedThreadCwd !== null
@@ -663,19 +658,19 @@ function ThreadRouteContent(
           }
         : undefined,
     onOpenFilesInspector:
-      !threadRunsRemotely && fileInspector.supported && selectedThreadCwd !== null
+      hasLocalWorkspace && fileInspector.supported && selectedThreadCwd !== null
         ? handleOpenFilesInspector
         : undefined,
     onOpenGitInspector:
-      !threadRunsRemotely && fileInspector.supported ? handleOpenGitInspector : undefined,
-    currentBranch: threadRunsRemotely ? null : (selectedThread?.branch ?? null),
+      hasLocalWorkspace && fileInspector.supported ? handleOpenGitInspector : undefined,
+    currentBranch: hasLocalWorkspace ? (selectedThread?.branch ?? null) : null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: !threadRunsRemotely && Boolean(selectedThreadProject?.workspaceRoot),
-    canOpenFiles: !threadRunsRemotely && Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: threadRunsRemotely ? [] : (selectedThreadProject?.scripts ?? []),
-    terminalSessions: threadRunsRemotely ? [] : terminalMenuSessions,
-    showDirectFileControl: !threadRunsRemotely && layout.usesSplitView,
+    canOpenTerminal: hasLocalWorkspace && Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenFiles: hasLocalWorkspace && Boolean(selectedThreadProject?.workspaceRoot),
+    projectScripts: hasLocalWorkspace ? (selectedThreadProject?.scripts ?? []) : [],
+    terminalSessions: hasLocalWorkspace ? terminalMenuSessions : [],
+    showDirectFileControl: hasLocalWorkspace && layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
@@ -851,7 +846,7 @@ function ThreadRouteContent(
         <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
       )}
 
-      {!threadRunsRemotely ? (
+      {hasLocalWorkspace ? (
         <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
       ) : null}
 
@@ -877,9 +872,9 @@ function ThreadRouteContent(
           loadEarlier={loadEarlierTurns}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={
-            threadRunsRemotely ? null : (selectedThreadProject?.workspaceRoot ?? null)
+            hasLocalWorkspace ? (selectedThreadProject?.workspaceRoot ?? null) : null
           }
-          threadCwd={threadRunsRemotely ? null : selectedThreadCwd}
+          threadCwd={hasLocalWorkspace ? selectedThreadCwd : null}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}

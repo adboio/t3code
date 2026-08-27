@@ -43,6 +43,10 @@
       "types": "./src/providerSkills.ts",
       "default": "./src/providerSkills.ts"
     },
+    "./threadWorkspaceCapabilities": {
+      "types": "./src/threadWorkspaceCapabilities.ts",
+      "default": "./src/threadWorkspaceCapabilities.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"

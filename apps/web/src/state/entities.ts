@@ -8,6 +8,7 @@ import {
   type EnvironmentThreadStatus,
   mergeEnvironmentThread,
 } from "@t3tools/client-runtime/state/threads";
+import { threadWorkspaceCapabilities } from "@t3tools/client-runtime/threadWorkspaceCapabilities";
 import type {
   OrchestrationMessage,
   OrchestrationProposedPlan,
@@ -17,8 +18,7 @@ import type {
   ScopedThreadRef,
   ServerConfig,
 } from "@t3tools/contracts";
-import { providerInstanceExecutesRemotely } from "@t3tools/contracts";
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -269,14 +269,13 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
   );
 }
 
-export function readProviderRunsRemotely(
-  environmentId: EnvironmentId,
-  instanceId: ProviderInstanceId | null | undefined,
-): boolean {
-  return providerInstanceExecutesRemotely(
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.providers,
-    instanceId,
-  );
+export function readThreadWorkspaceCapabilities(thread: EnvironmentThreadShell) {
+  return threadWorkspaceCapabilities({
+    providers: appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)
+      ?.providers,
+    providerInstanceId: thread.modelSelection.instanceId,
+    session: thread.session,
+  });
 }
 
 export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {

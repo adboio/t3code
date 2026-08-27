@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationReadModel,
   type OrchestrationSession,
   type OrchestrationThread,
@@ -471,6 +472,40 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         "thread.unsettled",
         "thread.session-set",
       ]);
+    }),
+  );
+
+  it.effect("captures the request-time turn owner for a steer", () =>
+    Effect.gen(function* () {
+      const activeTurnId = TurnId.make("turn-running");
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-steer-running"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make("message-steer-running"),
+            role: "user",
+            text: "also check CI",
+            attachments: [],
+          },
+          steer: true,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null, null, {
+          ...makeSession("running"),
+          activeTurnId,
+        }),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      const requested = events.find((event) => event.type === "thread.turn-start-requested");
+      expect(requested?.type).toBe("thread.turn-start-requested");
+      if (requested?.type === "thread.turn-start-requested") {
+        expect(requested.payload.steer).toBe(true);
+        expect(requested.payload.targetTurnId).toBe(activeTurnId);
+      }
     }),
   );
 

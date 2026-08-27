@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { PostHogClient } from "../../posthog/PostHogClient.ts";
+import { PostHogCloudClient } from "../../posthog/PostHogCloudClient.ts";
 import { makePostHogCloudAdapter } from "../Layers/PostHogCloudAdapter.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -69,23 +69,17 @@ export const PostHogCloudDriver: ProviderDriver<PostHogCloudSettings, PostHogClo
     Effect.gen(function* () {
       const missing = () =>
         Effect.fail(new PostHogNotConfiguredError({ missing: ["apiKey"] as const }));
-      const posthog = Option.getOrElse(yield* Effect.serviceOption(PostHogClient), () =>
-        PostHogClient.of({
-          listReports: missing,
-          listReportArtefacts: missing,
-          listReportSignals: missing,
-          setReportState: missing,
-          getCurrentUser: missing,
-          setReviewers: missing,
-          listCloudModels: missing,
-          createCloudTask: missing,
-          runCloudTask: missing,
-          getCloudRun: missing,
-          commandCloudRun: missing,
-          cancelCloudRun: missing,
-          uploadCloudRunArtifacts: missing,
-          readCloudRunLogs: missing,
-          streamCloudRun: missing,
+      const posthog = Option.getOrElse(yield* Effect.serviceOption(PostHogCloudClient), () =>
+        PostHogCloudClient.of({
+          listModels: missing,
+          createTask: missing,
+          runTask: missing,
+          getRun: missing,
+          commandRun: missing,
+          cancelRun: missing,
+          uploadRunArtifacts: missing,
+          readRunLogs: missing,
+          streamRun: missing,
         }),
       );
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -101,7 +95,7 @@ export const PostHogCloudDriver: ProviderDriver<PostHogCloudSettings, PostHogClo
 
       const loadSnapshot = Effect.gen(function* () {
         const checkedAt = DateTime.formatIso(yield* DateTime.now);
-        const result = yield* posthog.listCloudModels().pipe(Effect.result);
+        const result = yield* posthog.listModels().pipe(Effect.result);
         const models = result._tag === "Success" ? result.success : [];
         return {
           instanceId,

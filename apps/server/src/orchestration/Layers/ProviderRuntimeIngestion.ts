@@ -49,46 +49,6 @@ import { canReplaceThreadTitle } from "../threadTitles.ts";
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
 
-export function cloudThreadMetadata(
-  input: unknown,
-  projectId: OrchestrationThread["projectId"],
-): {
-  readonly branch?: string;
-  readonly linkedPullRequest?: NonNullable<OrchestrationThread["linkedPullRequest"]>;
-} {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) return {};
-  const metadata = input as Record<string, unknown>;
-  const branch =
-    typeof metadata.branch === "string" && metadata.branch.trim()
-      ? metadata.branch.trim()
-      : undefined;
-  if (typeof metadata.prUrl !== "string") return branch ? { branch } : {};
-  try {
-    const url = new URL(metadata.prUrl);
-    const parts = url.pathname.split("/").filter(Boolean);
-    const number = Number(parts[3]);
-    if (
-      url.hostname !== "github.com" ||
-      parts.length < 4 ||
-      parts[2] !== "pull" ||
-      !Number.isSafeInteger(number) ||
-      number <= 0
-    ) {
-      return branch ? { branch } : {};
-    }
-    const repository =
-      typeof metadata.repository === "string" && metadata.repository.trim()
-        ? metadata.repository.trim()
-        : `${parts[0]}/${parts[1]}`;
-    return {
-      ...(branch ? { branch } : {}),
-      linkedPullRequest: { projectId, repository, number, url: metadata.prUrl },
-    };
-  } catch {
-    return branch ? { branch } : {};
-  }
-}
-
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
 // task.started/task.progress activities for the task are persisted with it.
@@ -169,6 +129,23 @@ function sameId(left: string | null | undefined, right: string | null | undefine
     return false;
   }
   return left === right;
+}
+
+function hasMatchingRecentUserMessage(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  text: string,
+  createdAt: string,
+): boolean {
+  const eventTime = Date.parse(createdAt);
+  return messages.some((message) => {
+    if (message.role !== "user" || message.text !== text) return false;
+    const messageTime = Date.parse(message.createdAt);
+    return (
+      Number.isFinite(eventTime) &&
+      Number.isFinite(messageTime) &&
+      Math.abs(eventTime - messageTime) <= 30_000
+    );
+  });
 }
 
 function hasAssistantMessageForTurn(
@@ -1809,6 +1786,15 @@ const make = Effect.gen(function* () {
               fallbackText: event.payload.detail,
             }
           : undefined;
+      const userMessageCompletion =
+        event.type === "item.completed" &&
+        event.payload.itemType === "user_message" &&
+        event.payload.detail?.trim()
+          ? {
+              messageId: MessageId.make(`provider-user:${event.itemId ?? event.eventId}`),
+              text: event.payload.detail.trim(),
+            }
+          : undefined;
       const proposedPlanCompletion =
         event.type === "turn.proposed.completed"
           ? {
@@ -1817,6 +1803,28 @@ const make = Effect.gen(function* () {
               planMarkdown: event.payload.planMarkdown,
             }
           : undefined;
+
+      if (userMessageCompletion) {
+        const detailedThread = yield* getLoadedThreadDetail();
+        if (
+          !hasMatchingRecentUserMessage(
+            detailedThread?.messages ?? [],
+            userMessageCompletion.text,
+            now,
+          )
+        ) {
+          const turnId = toTurnId(event.turnId);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.message.user.append",
+            commandId: yield* providerCommandId(event, "user-message-append"),
+            threadId: thread.id,
+            messageId: userMessageCompletion.messageId,
+            text: userMessageCompletion.text,
+            ...(turnId ? { turnId } : {}),
+            createdAt: now,
+          });
+        }
+      }
 
       if (assistantCompletion) {
         const detailedThread = yield* getLoadedThreadDetail();
@@ -1953,21 +1961,21 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "thread.metadata.updated") {
-        const providerMetadata = cloudThreadMetadata(event.payload.metadata, thread.projectId);
         const title =
           event.payload.name && canReplaceThreadTitle(thread.title)
             ? event.payload.name
             : undefined;
-        if (title || providerMetadata.branch || providerMetadata.linkedPullRequest) {
+        const linkedPullRequest = event.payload.pullRequest
+          ? { projectId: thread.projectId, ...event.payload.pullRequest }
+          : undefined;
+        if (title || event.payload.branch || linkedPullRequest) {
           yield* orchestrationEngine.dispatch({
             type: "thread.meta.update",
             commandId: yield* providerCommandId(event, "thread-meta-update"),
             threadId: thread.id,
             ...(title ? { title } : {}),
-            ...(providerMetadata.branch ? { branch: providerMetadata.branch } : {}),
-            ...(providerMetadata.linkedPullRequest
-              ? { linkedPullRequest: providerMetadata.linkedPullRequest }
-              : {}),
+            ...(event.payload.branch ? { branch: event.payload.branch } : {}),
+            ...(linkedPullRequest ? { linkedPullRequest } : {}),
           });
         }
       }

@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const PostHogCloudTaskId = TrimmedNonEmptyString.pipe(Schema.brand("PostHogCloudTaskId"));
 export type PostHogCloudTaskId = typeof PostHogCloudTaskId.Type;
@@ -81,6 +81,7 @@ export const PostHogCloudResumeCursor = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   runId: Schema.optional(PostHogCloudRunId),
   lastEventId: Schema.optional(TrimmedNonEmptyString),
+  processedEntryCount: Schema.optional(NonNegativeInt),
 });
 export type PostHogCloudResumeCursor = typeof PostHogCloudResumeCursor.Type;
 
@@ -93,5 +94,10 @@ export type PostHogCloudStreamEvent = typeof PostHogCloudStreamEvent.Type;
 
 export const PostHogCloudCommandResult = Schema.Struct({
   response: Schema.optional(Schema.Unknown),
+  result: Schema.optional(Schema.Unknown),
+  queued: Schema.optional(Schema.Boolean),
+  stopReason: Schema.optional(Schema.String),
+  steered: Schema.optional(Schema.Boolean),
+  duplicate: Schema.optional(Schema.Boolean),
 });
 export type PostHogCloudCommandResult = typeof PostHogCloudCommandResult.Type;

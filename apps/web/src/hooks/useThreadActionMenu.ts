@@ -27,7 +27,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
-  readProviderRunsRemotely,
+  readThreadWorkspaceCapabilities,
   readThreadShell,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
@@ -146,10 +146,7 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
-          canStopRun:
-            readProviderRunsRemotely(threadRef.environmentId, thread.modelSelection.instanceId) &&
-            thread.session !== null &&
-            thread.session.status !== "stopped",
+          canStopRun: readThreadWorkspaceCapabilities(thread).canStopSession,
           supports,
           snoozePresets,
         });

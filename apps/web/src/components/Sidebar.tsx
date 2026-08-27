@@ -30,7 +30,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import { providerInstanceExecutesRemotely } from "@t3tools/contracts";
+import { threadWorkspaceCapabilities } from "@t3tools/client-runtime/threadWorkspaceCapabilities";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -3089,13 +3089,11 @@ export default function Sidebar() {
               isRegeneratingTitle,
               isRunning:
                 thread.session?.status === "running" && thread.session.activeTurnId != null,
-              canStopRun:
-                providerInstanceExecutesRemotely(
-                  serverConfigs.get(thread.environmentId)?.providers,
-                  thread.modelSelection.instanceId,
-                ) &&
-                thread.session !== null &&
-                thread.session.status !== "stopped",
+              canStopRun: threadWorkspaceCapabilities({
+                providers: serverConfigs.get(thread.environmentId)?.providers,
+                providerInstanceId: thread.modelSelection.instanceId,
+                session: thread.session,
+              }).canStopSession,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,

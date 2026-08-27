@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   providerExecutesRemotely,
-  providerInstanceExecutesRemotely,
   ServerConfig,
   ServerProvider,
   ServerProviders,
@@ -135,20 +134,6 @@ describe("provider execution locality", () => {
 
   it("reads the declared locality", () => {
     expect(providerExecutesRemotely(remoteSnapshot)).toBe(true);
-  });
-
-  it("resolves a thread's instance to its provider's locality", () => {
-    const providers = [localSnapshot, remoteSnapshot];
-    expect(providerInstanceExecutesRemotely(providers, "posthogCloud")).toBe(true);
-    expect(providerInstanceExecutesRemotely(providers, "codex")).toBe(false);
-  });
-
-  it("falls back to local for an unknown or missing instance", () => {
-    // A provider list that has not loaded yet must not strip local
-    // affordances from an ordinary thread.
-    expect(providerInstanceExecutesRemotely([localSnapshot], "someFork")).toBe(false);
-    expect(providerInstanceExecutesRemotely(null, "posthogCloud")).toBe(false);
-    expect(providerInstanceExecutesRemotely([remoteSnapshot], undefined)).toBe(false);
   });
 });
 

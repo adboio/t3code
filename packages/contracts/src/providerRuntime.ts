@@ -304,6 +304,14 @@ export type ThreadStateChangedPayload = typeof ThreadStateChangedPayload.Type;
 
 const ThreadMetadataUpdatedPayload = Schema.Struct({
   name: Schema.optional(TrimmedNonEmptyStringSchema),
+  branch: Schema.optional(TrimmedNonEmptyStringSchema),
+  pullRequest: Schema.optional(
+    Schema.Struct({
+      repository: TrimmedNonEmptyStringSchema,
+      number: PositiveInt,
+      url: TrimmedNonEmptyStringSchema,
+    }),
+  ),
   metadata: Schema.optional(UnknownRecordSchema),
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;

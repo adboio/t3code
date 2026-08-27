@@ -10,13 +10,17 @@ A PostHog Task is the durable remote conversation. A TaskRun is one sandbox leas
 
 `_posthog/turn_complete` completes a turn without completing the TaskRun. The composer working state follows the active turn, not merely a TaskRun whose status is `in_progress`.
 
+A message sent while a turn is active carries an explicit steer intent and the request-time turn owner through orchestration. The adapter reuses that t3 turn id and sends the Cloud command with `steer: true`; the request does not create pending-turn or checkpoint bookkeeping and does not publish another `turn.started`. The command id is the t3 message id, so PostHog can deduplicate a retried delivery.
+
+PostHog can continue producing output after the prompt lifecycle T3 originally tracked has ended. `_posthog/background_turn_started` opens a visible synthetic turn and `_posthog/background_turn_complete` closes it. If content arrives without the start notification, the first assistant, reasoning, plan, tool, permission, or external prompt event opens the same kind of implicit turn. This matches PostHog Desktop's append-only conversation builder and prevents ownerless assistant buffers from disappearing.
+
 t3 only stores and controls Tasks it created. It does not import a user's complete PostHog Task history.
 
 ## Provider behavior
 
-The t3 server owns the PostHog personal API key and all Cloud API traffic. It opens one upstream SSE connection for each live TaskRun and translates Agent Client Protocol messages into t3 provider runtime events. Web, desktop, mobile, remote, and tunnel clients continue to receive the existing t3 snapshot and WebSocket event stream.
+The t3 server owns the PostHog personal API key and all Cloud API traffic. Reports and Cloud Tasks have separate service surfaces over one authenticated PostHog transport. The Cloud adapter opens one upstream SSE connection for each live TaskRun; a schema-backed protocol module translates Agent Client Protocol messages into t3 provider runtime events, while a run-session state owner tracks cursors, deduplication, active items, and permissions. Web, desktop, mobile, remote, and tunnel clients continue to receive the existing t3 snapshot and WebSocket event stream.
 
-The stream connects before historical logs finish loading. The adapter buffers live frames, folds the historical JSONL snapshot, removes duplicates, then drains the buffered tail. It resumes with `Last-Event-ID`. A disconnected stream triggers an authoritative TaskRun status read and a bounded reconnect; transport loss alone never marks a run failed.
+The stream connects before historical logs finish loading. The adapter buffers live frames, folds the historical JSONL snapshot by durable line position, removes only the matching buffered copies, then drains the live tail. Matching canonicalizes the JSONL `message` and SSE `notification` envelopes, ignores transport timestamps and object-key order, and still counts repeated semantic events individually. Identical text chunks remain distinct log entries. It keeps both the latest SSE event id and processed JSONL entry count in the live session; meaningful runtime boundaries persist that cursor to the provider binding, while high-volume text and token deltas do not write SQLite individually. Reconciliation consumes live/log copies in order, and a malformed JSONL tail is retried before the cursor may pass it. Reconnects resume with `Last-Event-ID` and reconcile the authoritative full log before retrying, so a missing live batch is repaired without restarting t3. A disconnected stream also triggers an authoritative TaskRun status read; transport loss alone never marks a run failed.
 
 PostHog's model catalogue supplies the available runtime adapters, models, and reasoning levels. PostHog run configuration owns permission defaults. t3 does not maintain independent allowlists for either. GitHub installation and authentication also remain PostHog concerns.
 
@@ -32,13 +36,15 @@ Closing t3 or refreshing the provider stops only the local stream watcher. It do
 
 Approval and structured user-input cards use the existing t3 request surfaces. Responses return through the TaskRun command endpoint. Replayed unresolved requests restore those cards without repeating already observed side effects.
 
+`session/prompt` entries sent from PostHog Desktop or another surface become user messages in the t3 transcript. T3 registers its own outgoing prompt text and consumes the corresponding stream echo; ingestion also suppresses a matching recent local message during historical replay.
+
 Attachments are uploaded to the active PostHog TaskRun and passed as artifact ids with the next message. An attachment-first TaskRun starts idle so the agent receives the prompt and its artifacts together.
 
 ## Cloud workspace
 
 Cloud threads do not expose a local terminal, local file tree, staging actions, checkpoints, rewind, or discard.
 
-Clients do not decide that by recognising the PostHog Cloud provider. The provider declares `execution: "remote"` on its snapshot and its adapter capabilities, and both clients gate every local-workspace affordance on that one field through `providerInstanceExecutesRemotely`. The server reads the same capability when it decides whether local attachment paths belong in the prompt. Any future remote provider inherits the behavior by declaring the field; nothing keys on a driver slug. Streamed file changes and diffs provide the working view until PostHog reports a branch or pull request, which then becomes the authoritative durable result.
+Clients do not decide that by recognising the PostHog Cloud provider. The provider declares `execution: "remote"`, and the shared `threadWorkspaceCapabilities` selector derives `hasLocalWorkspace` and `canStopSession` for web and mobile. Until provider capabilities load, local-workspace actions stay unavailable instead of briefly exposing invalid controls. Attachment transport is independent: the Cloud adapter declares `attachmentMode: "upload"`, while local adapters retain path-enriched prompts. Any future provider inherits these behaviors by declaring capabilities; nothing keys on a driver slug. Streamed file changes and diffs provide the working view until PostHog reports canonical branch or pull-request metadata, which then becomes the authoritative durable result.
 
 The prototype starts Cloud threads from an existing t3 project and passes its GitHub repository identity to PostHog. The provider contract keeps repository identity separate from a local path so a future PostHog repository picker can create remote-only projects without changing thread identity.
 
@@ -48,7 +54,7 @@ The prototype starts Cloud threads from an existing t3 project and passes its Gi
 
 Cloud uses the normal t3 transcript, tool, plan, approval, question, error, diff, branch, and pull request components. Infrastructure progress stays in the existing working row instead of becoming permanent transcript cards.
 
-Before transcript output, `queued` displays “Waiting in the queue…” and `in_progress` displays “Starting the sandbox…”. `_posthog/progress` labels such as “Restoring sandbox”, “Cloning repository”, and “Starting agent” replace that text as they arrive.
+Before transcript output, `queued` displays “Waiting in the queue…” and `in_progress` displays “Starting the sandbox…”. `_posthog/progress` labels such as “Restoring sandbox”, “Cloning repository”, and “Starting agent” replace that text as they arrive. Progress steps use separate identities: setup remains in the working log, CI keeps its own row, and a completed `pr` step links the pull request to the thread instead of being overwritten by later CI progress.
 
 Report actions remain prompt shortcuts, not execution modes. “Ask about it” creates a normal Cloud conversation. “Implement it” starts with its implementation prompt. Report-linked discussion tasks use the `discussion` relationship; a later pull request from that thread may not count as a formal Signals implementation for PostHog linkage, quotas, or billing.
 

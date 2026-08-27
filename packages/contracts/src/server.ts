@@ -222,18 +222,6 @@ export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
 export const providerExecutesRemotely = (snapshot: ServerProvider): boolean =>
   snapshot.execution === "remote";
 
-/** Missing providers and unknown instances are local while configuration loads. */
-export const providerInstanceExecutesRemotely = (
-  providers: ReadonlyArray<ServerProvider> | null | undefined,
-  instanceId: ProviderInstanceId | string | null | undefined,
-): boolean => {
-  if (!providers || !instanceId) {
-    return false;
-  }
-  const snapshot = providers.find((candidate) => candidate.instanceId === instanceId);
-  return snapshot !== undefined && providerExecutesRemotely(snapshot);
-};
-
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,
   localTracingEnabled: Schema.Boolean,

@@ -9,7 +9,6 @@ import {
   type ProjectId,
   type ProviderApprovalDecision,
   type PreviewAnnotationPayload,
-  providerInstanceExecutesRemotely,
   ProviderInstanceId,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
@@ -27,6 +26,7 @@ import {
   connectionStatusTitle,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { threadWorkspaceCapabilities } from "@t3tools/client-runtime/threadWorkspaceCapabilities";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import {
   changeRequestAutoSettles,
@@ -1616,10 +1616,14 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
-  const threadRunsRemotely = providerInstanceExecutesRemotely(
-    activeThread ? environmentById.get(activeThread.environmentId)?.serverConfig?.providers : null,
-    activeThread?.modelSelection.instanceId,
-  );
+  const workspaceCapabilities = threadWorkspaceCapabilities({
+    providers: activeThread
+      ? environmentById.get(activeThread.environmentId)?.serverConfig?.providers
+      : null,
+    providerInstanceId: activeThread?.modelSelection.instanceId,
+    session: activeThread?.session,
+  });
+  const { hasLocalWorkspace, runsRemotely: threadRunsRemotely } = workspaceCapabilities;
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -1760,7 +1764,7 @@ function ChatViewContent(props: ChatViewProps) {
   const remoteRightPanelSurfaceAvailable =
     activeRightPanelSurface?.kind === "pull-request" || activeRightPanelSurface?.kind === "agents";
   const rightPanelOpen =
-    rightPanelState.isOpen && (!threadRunsRemotely || remoteRightPanelSurfaceAvailable);
+    rightPanelState.isOpen && (hasLocalWorkspace || remoteRightPanelSurfaceAvailable);
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
@@ -2433,7 +2437,7 @@ function ChatViewContent(props: ChatViewProps) {
       const title = (progress.payload as { title?: unknown }).title;
       if (typeof title === "string" && title.trim()) return title;
     }
-    return "Starting the sandbox…";
+    return null;
   }, [activeLatestTurn?.turnId, activePlan, threadRunsRemotely, threadActivities]);
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
@@ -2890,7 +2894,7 @@ function ChatViewContent(props: ChatViewProps) {
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   // Hide the strip too, or an empty tray still occupies space in the composer.
-  const showComposerGitControls = isGitRepo && !threadRunsRemotely;
+  const showComposerGitControls = isGitRepo && hasLocalWorkspace;
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo: showComposerGitControls,
@@ -3029,7 +3033,7 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThreadRef, storeSetTerminalOpen],
   );
   const toggleTerminalVisibility = useCallback(() => {
-    if (!activeThreadRef || threadRunsRemotely) return;
+    if (!activeThreadRef || !hasLocalWorkspace) return;
     const nextOpen = !terminalUiState.terminalOpen;
     if (nextOpen && terminalUiState.terminalIds.length === 0) {
       if (!activeThreadId || !activeProject) {
@@ -3070,7 +3074,7 @@ function ChatViewContent(props: ChatViewProps) {
     storeEnsureTerminal,
     terminalUiState.terminalIds.length,
     terminalUiState.terminalOpen,
-    threadRunsRemotely,
+    hasLocalWorkspace,
   ]);
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
@@ -3490,14 +3494,14 @@ function ChatViewContent(props: ChatViewProps) {
     void addBrowserSurface({ threadRef: activeThreadRef, openPreview });
   }, [activeThreadRef, openPreview]);
   const addDiffSurface = useCallback(() => {
-    if (!activeThreadRef || !isServerThread || !isGitRepo || threadRunsRemotely) return;
+    if (!activeThreadRef || !isServerThread || !isGitRepo || !hasLocalWorkspace) return;
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
-  }, [activeThreadRef, threadRunsRemotely, isGitRepo, isServerThread, onDiffPanelOpen]);
+  }, [activeThreadRef, hasLocalWorkspace, isGitRepo, isServerThread, onDiffPanelOpen]);
   const addFilesSurface = useCallback(() => {
-    if (!activeThreadRef || !activeProject || threadRunsRemotely) return;
+    if (!activeThreadRef || !activeProject || !hasLocalWorkspace) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
-  }, [activeProject, activeThreadRef, threadRunsRemotely]);
+  }, [activeProject, activeThreadRef, hasLocalWorkspace]);
   const addAgentsSurface = useCallback(() => {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
@@ -3574,7 +3578,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeThreadRef]);
   const addTerminalSurface = useCallback(() => {
-    if (!activeThreadRef || !activeThreadId || !activeProject || threadRunsRemotely) return;
+    if (!activeThreadRef || !activeThreadId || !activeProject || !hasLocalWorkspace) return;
     const cwd = gitCwd ?? activeProject.workspaceRoot;
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
@@ -3599,7 +3603,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadWorktreePath,
     allocatableActiveTerminalIds,
     gitCwd,
-    threadRunsRemotely,
+    hasLocalWorkspace,
     openTerminal,
   ]);
   const splitPanelTerminal = useCallback(
@@ -5920,6 +5924,7 @@ function ChatViewContent(props: ChatViewProps) {
             attachments: turnAttachmentsResult.value,
           },
           modelSelection: ctxSelectedModelSelection,
+          steer: phase === "running",
           titleSeed: title,
           runtimeMode,
           interactionMode,
@@ -6724,12 +6729,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
-      if (!isServerThread || !activeThreadRef || threadRunsRemotely) return;
+      if (!isServerThread || !activeThreadRef || !hasLocalWorkspace) return;
       useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
     },
-    [activeThreadRef, threadRunsRemotely, isServerThread, onDiffPanelOpen],
+    [activeThreadRef, hasLocalWorkspace, isServerThread, onDiffPanelOpen],
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
@@ -6752,11 +6757,11 @@ function ChatViewContent(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
-      terminalAvailable={activeProject !== null && !threadRunsRemotely}
+      terminalAvailable={activeProject !== null && hasLocalWorkspace}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
       rightPanelAvailable={
-        activeProject !== null && (!threadRunsRemotely || remoteRightPanelSurfaceAvailable)
+        activeProject !== null && (hasLocalWorkspace || remoteRightPanelSurfaceAvailable)
       }
       rightPanelOpen={rightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
@@ -6940,7 +6945,7 @@ function ChatViewContent(props: ChatViewProps) {
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
-            localWorkspaceActionsAvailable={!threadRunsRemotely}
+            localWorkspaceActionsAvailable={hasLocalWorkspace}
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
@@ -7003,7 +7008,7 @@ function ChatViewContent(props: ChatViewProps) {
                   environmentId={activeServerThread.environmentId}
                   reportId={activeThreadReportId}
                   threadId={activeServerThread.id}
-                  {...(!threadRunsRemotely ? { onOpenTerminal: () => setTerminalOpen(true) } : {})}
+                  {...(hasLocalWorkspace ? { onOpenTerminal: () => setTerminalOpen(true) } : {})}
                 />
               ) : null}
               {/* Messages — LegendList handles virtualization and scrolling internally */}
@@ -7026,10 +7031,10 @@ function ChatViewContent(props: ChatViewProps) {
                 onRevertUserMessage={onRevertUserMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
-                markdownCwd={threadRunsRemotely ? undefined : (gitCwd ?? undefined)}
+                markdownCwd={hasLocalWorkspace ? (gitCwd ?? undefined) : undefined}
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
-                workspaceRoot={threadRunsRemotely ? undefined : activeWorkspaceRoot}
+                workspaceRoot={hasLocalWorkspace ? activeWorkspaceRoot : undefined}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
@@ -7335,7 +7340,7 @@ function ChatViewContent(props: ChatViewProps) {
             visible={
               mountedThreadKey === activeThreadKey &&
               terminalUiState.terminalOpen &&
-              !threadRunsRemotely
+              hasLocalWorkspace
             }
             launchContext={
               mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
@@ -7375,9 +7380,9 @@ function ChatViewContent(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurface}
           onAddAgents={addAgentsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
-          terminalAvailable={activeProject !== null && !threadRunsRemotely}
-          diffAvailable={isServerThread && isGitRepo && !threadRunsRemotely}
-          filesAvailable={activeProject !== null && !threadRunsRemotely}
+          terminalAvailable={activeProject !== null && hasLocalWorkspace}
+          diffAvailable={isServerThread && isGitRepo && hasLocalWorkspace}
+          filesAvailable={activeProject !== null && hasLocalWorkspace}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           agentsAvailable
           pullRequestStatuses={pullRequestTabStatuses}
@@ -7415,9 +7420,9 @@ function ChatViewContent(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurface}
             onAddAgents={addAgentsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
-            terminalAvailable={activeProject !== null && !threadRunsRemotely}
-            diffAvailable={isServerThread && isGitRepo && !threadRunsRemotely}
-            filesAvailable={activeProject !== null && !threadRunsRemotely}
+            terminalAvailable={activeProject !== null && hasLocalWorkspace}
+            diffAvailable={isServerThread && isGitRepo && hasLocalWorkspace}
+            filesAvailable={activeProject !== null && hasLocalWorkspace}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             agentsAvailable
             pullRequestStatuses={pullRequestTabStatuses}

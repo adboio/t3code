@@ -121,6 +121,20 @@ describe("ProviderSessionStartInput", () => {
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("preserves explicit steer ownership and message identity", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      messageId: "message-1",
+      steer: true,
+      targetTurnId: "turn-1",
+      input: "change direction",
+    });
+
+    expect(parsed.messageId).toBe("message-1");
+    expect(parsed.steer).toBe(true);
+    expect(parsed.targetTurnId).toBe("turn-1");
+  });
+
   it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",
