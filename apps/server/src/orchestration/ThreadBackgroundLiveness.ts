@@ -30,7 +30,7 @@ interface ThreadLivenessState {
 // Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
 // watch loops — monitor tasks plus background shells, which in practice are
 // PR babysitting/log tails since pacing sleeps complete inside the turn;
-// INERT_TASK_TYPES: plan-mode bookkeeping) so this registry, ingestion's
+// INERT_TASK_TYPES: provider/session bookkeeping) so this registry, ingestion's
 // agentKind stamp, and the client fold can never drift apart.
 
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set([

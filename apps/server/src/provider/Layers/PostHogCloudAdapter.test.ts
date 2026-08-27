@@ -56,8 +56,10 @@ describe("PostHogCloudAdapter", () => {
     const uploadCalls: Array<Parameters<PostHogClient["Service"]["uploadCloudRunArtifacts"]>[0]> =
       [];
     const createCalls: Array<Parameters<PostHogClient["Service"]["createCloudTask"]>[0]> = [];
+    const streamInputs: Array<Parameters<PostHogClient["Service"]["streamCloudRun"]>[0]> = [];
     let currentRun = cloudRun(runOneId, "in_progress");
     let streamCalls = 0;
+    let logCalls = 0;
 
     const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
     const posthog = PostHogClient.of({
@@ -97,12 +99,20 @@ describe("PostHogCloudAdapter", () => {
           uploadCalls.push(input);
           return [{ id: `artifact-${uploadCalls.length}`, name: input.artifacts[0]?.name }];
         }),
-      readCloudRunLogs: () => Effect.succeed(""),
-      streamCloudRun: () =>
-        Effect.succeed(
-          streamCalls++ === 0
+      readCloudRunLogs: () =>
+        Effect.sync(() => {
+          logCalls += 1;
+          return logCalls === 1
+            ? '{"type":"notification","notification":{"method":"_posthog/progress","params":{"label":"Setting up sandbox"}}}'
+            : "";
+        }),
+      streamCloudRun: (input) =>
+        Effect.sync(() => {
+          streamInputs.push(input);
+          return streamCalls++ === 0
             ? Stream.make(
                 {
+                  id: "event-1",
                   event: "message",
                   data: {
                     type: "permission_request",
@@ -133,7 +143,7 @@ describe("PostHogCloudAdapter", () => {
                       params: {
                         update: {
                           sessionUpdate: "agent_message_chunk",
-                          content: { type: "text", text: "Hello" },
+                          content: { type: "text", text: "Before" },
                         },
                       },
                     },
@@ -148,7 +158,62 @@ describe("PostHogCloudAdapter", () => {
                       params: {
                         update: {
                           sessionUpdate: "agent_message",
-                          content: { type: "text", text: "Hello" },
+                          content: { type: "text", text: "Before" },
+                        },
+                      },
+                    },
+                  },
+                },
+                {
+                  event: "message",
+                  data: {
+                    type: "notification",
+                    notification: {
+                      method: "session/update",
+                      params: {
+                        update: {
+                          sessionUpdate: "tool_call",
+                          toolCallId: "bash-1",
+                          title: "/bin/bash -lc pwd",
+                          kind: "execute",
+                          status: "in_progress",
+                        },
+                      },
+                    },
+                  },
+                },
+                {
+                  event: "message",
+                  data: {
+                    type: "notification",
+                    notification: {
+                      method: "session/update",
+                      params: {
+                        update: {
+                          sessionUpdate: "tool_call_update",
+                          toolCallId: "bash-1",
+                          status: "completed",
+                          content: [
+                            {
+                              type: "content",
+                              content: { type: "text", text: "---\n/root/posthog" },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                },
+                {
+                  event: "message",
+                  data: {
+                    type: "notification",
+                    notification: {
+                      method: "session/update",
+                      params: {
+                        update: {
+                          sessionUpdate: "agent_message",
+                          content: { type: "text", text: "After" },
                         },
                       },
                     },
@@ -162,8 +227,8 @@ describe("PostHogCloudAdapter", () => {
                   },
                 },
               )
-            : Stream.never,
-        ),
+            : Stream.never;
+        }),
     });
     const fileSystem = FileSystem.makeNoop({
       readFile: () => Effect.succeed(new TextEncoder().encode("image bytes")),
@@ -229,7 +294,13 @@ describe("PostHogCloudAdapter", () => {
           [
             "turn.started",
             "task.progress",
+            "task.progress",
             "user-input.requested",
+            "item.started",
+            "content.delta",
+            "item.completed",
+            "item.started",
+            "item.completed",
             "item.started",
             "content.delta",
             "item.completed",
@@ -249,7 +320,34 @@ describe("PostHogCloudAdapter", () => {
         const deltas = firstTurnEvents
           .filter((event) => event.type === "content.delta")
           .map((event) => event.payload.delta);
-        assert.deepStrictEqual(deltas, ["Hello"]);
+        assert.deepStrictEqual(deltas, ["Before", "After"]);
+        const assistantItems = firstTurnEvents.filter(
+          (event) =>
+            event.type === "item.started" && event.payload.itemType === "assistant_message",
+        );
+        assert.equal(assistantItems.length, 2);
+        assert.notEqual(assistantItems[0]?.itemId, assistantItems[1]?.itemId);
+        const toolCompletion = firstTurnEvents.find(
+          (event) =>
+            event.type === "item.completed" && event.payload.itemType === "command_execution",
+        );
+        if (!toolCompletion || toolCompletion.type !== "item.completed") {
+          assert.fail("Expected a completed command");
+        }
+        assert.equal(toolCompletion.payload.title, "/bin/bash -lc pwd");
+        assert.equal(toolCompletion.payload.detail, "---\n/root/posthog");
+        assert.equal(
+          (toolCompletion.payload.data as Record<string, unknown> | undefined)?.command,
+          "/bin/bash -lc pwd",
+        );
+        const setupProgress = firstTurnEvents.filter((event) => event.type === "task.progress");
+        assert.equal(setupProgress.length, 2);
+        assert.equal(
+          setupProgress.every((event) => event.payload.taskType === "provider_setup"),
+          true,
+        );
+        assert.equal(streamInputs[0]?.startLatest, undefined);
+        assert.equal(logCalls, 1);
         yield* adapter.sendTurn({ threadId, input: "Keep going", attachments: [], modelSelection });
 
         currentRun = cloudRun(runOneId, "completed");
@@ -326,6 +424,11 @@ describe("PostHogCloudAdapter", () => {
           ],
         );
         assert.deepStrictEqual(cancelCalls, [{ taskId, runId: runTwoId }]);
+        assert.equal(logCalls, 3);
+        assert.equal(
+          streamInputs.find((input) => input.runId === runTwoId)?.lastEventId,
+          undefined,
+        );
 
         const sessions = yield* adapter.listSessions();
         assert.equal(sessions[0]?.status, "closed");

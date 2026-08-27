@@ -43,11 +43,18 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 
 const PROVIDER = ProviderDriverKind.make("posthogCloud");
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const CLOUD_SETUP_TASK_ID = RuntimeTaskId.make("posthog-cloud-setup");
+const CLOUD_SETUP_TASK_TYPE = "provider_setup";
 
 interface PermissionOption {
   readonly optionId: string;
   readonly kind?: string;
   readonly name?: string;
+}
+
+interface CloudToolState {
+  readonly itemId: RuntimeItemId;
+  readonly update: Record<string, unknown>;
 }
 
 interface CloudSessionContext {
@@ -64,7 +71,7 @@ interface CloudSessionContext {
   watcher: Fiber.Fiber<void> | undefined;
   sequence: number;
   readonly seen: Set<string>;
-  readonly toolItems: Map<string, RuntimeItemId>;
+  readonly toolItems: Map<string, CloudToolState>;
   readonly permissions: Map<string, ReadonlyArray<PermissionOption>>;
   readonly userInputRequests: Set<string>;
   readonly locallyResolvedUserInputs: Set<string>;
@@ -186,6 +193,22 @@ function itemStatus(status: unknown): "inProgress" | "completed" | "failed" | un
   return undefined;
 }
 
+function toolContentText(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const text = value
+    .flatMap((candidate) => {
+      const entry = record(candidate);
+      const content = record(entry?.content);
+      return entry?.type === "content" &&
+        content?.type === "text" &&
+        typeof content.text === "string"
+        ? [content.text]
+        : [];
+    })
+    .join("\n");
+  return text.trim().length > 0 ? text : undefined;
+}
+
 function planStatus(status: unknown): "pending" | "inProgress" | "completed" {
   if (status === "completed") return "completed";
   if (status === "in_progress") return "inProgress";
@@ -270,7 +293,9 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
     ...(context.runId ? { runId: context.runId } : {}),
     ...(() => {
       const cursor = record(context.session.resumeCursor);
-      return typeof cursor?.lastEventId === "string" ? { lastEventId: cursor.lastEventId } : {};
+      return cursor && cursor.runId === context.runId && typeof cursor.lastEventId === "string"
+        ? { lastEventId: cursor.lastEventId }
+        : {};
     })(),
   });
 
@@ -320,6 +345,33 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
     const params = livePermission ?? record(notification?.params);
     const timestamp = typeof envelope?.timestamp === "string" ? envelope.timestamp : undefined;
     const base = yield* eventBase(context, entry, timestamp).pipe(Effect.orDie);
+    const completeAssistant = (): ProviderRuntimeEvent[] => {
+      if (!context.assistantItemId) return [];
+      const itemId = context.assistantItemId;
+      context.assistantItemId = undefined;
+      context.assistantText = "";
+      return [
+        {
+          ...base,
+          type: "item.completed",
+          itemId,
+          payload: { itemType: "assistant_message", status: "completed" },
+        },
+      ];
+    };
+    const completeReasoning = (): ProviderRuntimeEvent[] => {
+      if (!context.reasoningItemId) return [];
+      const itemId = context.reasoningItemId;
+      context.reasoningItemId = undefined;
+      return [
+        {
+          ...base,
+          type: "item.completed",
+          itemId,
+          payload: { itemType: "reasoning", status: "completed" },
+        },
+      ];
+    };
 
     if (method === "session/update") {
       const update = record(params?.update);
@@ -328,18 +380,18 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
       if (updateType === "agent_message" || updateType === "agent_message_chunk") {
         const text = textFromContent(update.content);
         if (text === undefined) return [];
-        const delta =
-          updateType === "agent_message"
-            ? context.assistantText.length === 0
-              ? text
-              : text.startsWith(context.assistantText)
-                ? text.slice(context.assistantText.length)
-                : ""
-            : text;
+        const emitted: ProviderRuntimeEvent[] = [];
+        let delta = text;
+        if (updateType === "agent_message" && context.assistantText.length > 0) {
+          if (text.startsWith(context.assistantText)) {
+            delta = text.slice(context.assistantText.length);
+          } else {
+            emitted.push(...completeAssistant());
+          }
+        }
         context.assistantText =
           updateType === "agent_message" ? text : context.assistantText + text;
-        if (!delta) return [];
-        const emitted: ProviderRuntimeEvent[] = [];
+        if (!delta) return emitted;
         if (!context.assistantItemId) {
           context.assistantItemId = RuntimeItemId.make(
             `assistant:${context.runId}:${context.sequence}`,
@@ -402,28 +454,39 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
         const rawId = typeof update.toolCallId === "string" ? update.toolCallId : undefined;
         if (!rawId) return [];
         const existing = context.toolItems.get(rawId);
-        const itemId = existing ?? RuntimeItemId.make(rawId);
-        context.toolItems.set(rawId, itemId);
-        const status = itemStatus(update.status) ?? "inProgress";
+        const itemId = existing?.itemId ?? RuntimeItemId.make(rawId);
+        const mergedUpdate = { ...existing?.update, ...update };
+        context.toolItems.set(rawId, { itemId, update: mergedUpdate });
+        const status = itemStatus(mergedUpdate.status) ?? "inProgress";
+        const title =
+          typeof mergedUpdate.title === "string" && mergedUpdate.title.trim()
+            ? mergedUpdate.title.trim()
+            : undefined;
+        const detail = toolContentText(mergedUpdate.content);
+        const kind = mergedUpdate.kind;
         const payload = {
-          itemType: itemType(update.kind),
+          itemType: itemType(kind),
           status,
-          ...(typeof update.title === "string" && update.title.trim()
-            ? { title: update.title.trim() }
-            : {}),
-          data: update,
-        } as const;
-        if (!existing || updateType === "tool_call") {
-          return [{ ...base, type: "item.started", itemId, payload }];
-        }
-        return [
-          {
-            ...base,
-            type: status === "completed" || status === "failed" ? "item.completed" : "item.updated",
-            itemId,
-            payload,
+          ...(title ? { title } : {}),
+          ...(detail ? { detail } : {}),
+          data: {
+            ...mergedUpdate,
+            ...(kind === "execute" && title ? { command: title } : {}),
           },
-        ];
+        } as const;
+        const emitted =
+          updateType === "tool_call" ? [...completeAssistant(), ...completeReasoning()] : [];
+        if (!existing || updateType === "tool_call") {
+          emitted.push({ ...base, type: "item.started", itemId, payload });
+          return emitted;
+        }
+        emitted.push({
+          ...base,
+          type: status === "completed" || status === "failed" ? "item.completed" : "item.updated",
+          itemId,
+          payload,
+        });
+        return emitted;
       }
       if (updateType === "usage_update") {
         const used = typeof update.used === "number" ? update.used : undefined;
@@ -464,7 +527,8 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
           ...base,
           type: "task.progress",
           payload: {
-            taskId: RuntimeTaskId.make("posthog-cloud-setup"),
+            taskId: CLOUD_SETUP_TASK_ID,
+            taskType: CLOUD_SETUP_TASK_TYPE,
             description: label,
             summary: typeof params?.detail === "string" ? params.detail : undefined,
             status: params?.status === "completed" ? "completed" : "running",
@@ -577,23 +641,7 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
     }
     if (method === "_posthog/turn_complete") {
       if (!context.activeTurnId) return [];
-      const emitted: ProviderRuntimeEvent[] = [];
-      if (context.assistantItemId) {
-        emitted.push({
-          ...base,
-          type: "item.completed",
-          itemId: context.assistantItemId,
-          payload: { itemType: "assistant_message", status: "completed" },
-        });
-      }
-      if (context.reasoningItemId) {
-        emitted.push({
-          ...base,
-          type: "item.completed",
-          itemId: context.reasoningItemId,
-          payload: { itemType: "reasoning", status: "completed" },
-        });
-      }
+      const emitted = [...completeAssistant(), ...completeReasoning()];
       emitted.push({
         ...base,
         type: "turn.completed",
@@ -603,9 +651,6 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
           ...(params?.usage !== undefined ? { usage: params.usage } : {}),
         },
       });
-      context.assistantItemId = undefined;
-      context.assistantText = "";
-      context.reasoningItemId = undefined;
       context.activeTurnId = undefined;
       syncSession(context, { status: "ready", activeTurnId: undefined, updatedAt: base.createdAt });
       return emitted;
@@ -956,18 +1001,20 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
         });
       }
       context.runId = currentRun.id;
+      context.toolItems.clear();
       syncSession(context);
       yield* publish({
         ...(yield* eventBase(context, currentRun, createdAt).pipe(Effect.orDie)),
         type: "task.progress",
         payload: {
-          taskId: RuntimeTaskId.make("posthog-cloud-setup"),
+          taskId: CLOUD_SETUP_TASK_ID,
+          taskType: CLOUD_SETUP_TASK_TYPE,
           description:
             currentRun.status === "queued" ? "Waiting in the queue…" : "Starting the sandbox…",
           status: "running",
         },
       });
-      yield* watchRun(context, currentRun.id, false);
+      yield* watchRun(context, currentRun.id, true);
     }
     if (attachments.length > 0) {
       const artifactIds = yield* uploadAttachments(context, attachments);
