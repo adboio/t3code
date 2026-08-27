@@ -667,14 +667,8 @@ export const OpenCodeIcon: Icon = (props) => (
   </svg>
 );
 
-/**
- * The PostHog hedgehog, straight from the brand package rather than a copied
- * path. Its logomark is wider than it is tall (a 52x28 viewBox), so it
- * letterboxes inside the square slot every other provider icon fills.
- */
 export const PostHogIcon: Icon = ({ className, color: _color, ...props }) => (
-  // `color` is dropped: the gradient mark ignores it, and the brand props
-  // reject an explicit `undefined` under exactOptionalPropertyTypes.
+  // The gradient ignores color, so omit it rather than passing undefined under exactOptionalPropertyTypes.
   <Logo {...props} layout="logomark" className={cn("shrink-0", className)} />
 );
 

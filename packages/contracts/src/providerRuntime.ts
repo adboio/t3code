@@ -517,7 +517,6 @@ export const MONITOR_TASK_TYPES: ReadonlySet<string> = new Set([
   "local_bash",
   "shell",
 ]);
-/** Task types that are neither agents nor watch loops. */
 export const INERT_TASK_TYPES: ReadonlySet<string> = new Set(["plan", "dream", "provider_setup"]);
 
 /**

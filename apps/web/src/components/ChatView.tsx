@@ -1616,9 +1616,6 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
-  // Every local-workspace affordance below (terminal, diff, files, git
-  // controls, workspace-relative paths, checkpoints) hangs off this one fact,
-  // declared by the provider rather than inferred from its name.
   const threadRunsRemotely = providerInstanceExecutesRemotely(
     activeThread ? environmentById.get(activeThread.environmentId)?.serverConfig?.providers : null,
     activeThread?.modelSelection.instanceId,
@@ -2892,9 +2889,7 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
-  // One value, two consumers: the strip's own visibility and the controls
-  // inside it. Gating only the controls left the shell extending itself for
-  // an empty tray.
+  // Hide the strip too, or an empty tray still occupies space in the composer.
   const showComposerGitControls = isGitRepo && !threadRunsRemotely;
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,

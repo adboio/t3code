@@ -27,8 +27,8 @@ interface ThreadLivenessState {
   readonly monitors: Set<string>;
 }
 
-// Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
-// watch loops — monitor tasks plus background shells, which in practice are
+// Classification sets are shared contract copies (MONITOR_TASK_TYPES covers
+// watch loops, including monitor tasks and background shells, which in practice are
 // PR babysitting/log tails since pacing sleeps complete inside the turn;
 // INERT_TASK_TYPES: provider/session bookkeeping) so this registry, ingestion's
 // agentKind stamp, and the client fold can never drift apart.

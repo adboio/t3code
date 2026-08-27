@@ -200,9 +200,6 @@ function ThreadRouteContent(
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  // Same single fact the web client gates on: the provider declares whether
-  // its agent runs outside this environment, and every local-workspace
-  // affordance below follows from that.
   const threadRunsRemotely = providerInstanceExecutesRemotely(
     selectedThread ? serverConfigs.get(selectedThread.environmentId)?.providers : null,
     selectedThread?.modelSelection.instanceId,

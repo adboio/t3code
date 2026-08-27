@@ -3089,8 +3089,6 @@ export default function Sidebar() {
               isRegeneratingTitle,
               isRunning:
                 thread.session?.status === "running" && thread.session.activeTurnId != null,
-              // A remote run outlives the local session, so it is the only
-              // kind that can still be stopped from a menu.
               canStopRun:
                 providerInstanceExecutesRemotely(
                   serverConfigs.get(thread.environmentId)?.providers,

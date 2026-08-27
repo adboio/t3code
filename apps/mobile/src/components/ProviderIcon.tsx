@@ -51,10 +51,7 @@ export function ProviderIcon(props: ProviderIconProps) {
   }
 
   if (props.provider === "posthogCloud") {
-    // The brand package's flat 4-color logomark (viewBox 52x28, so it
-    // letterboxes in the square slot). Its DOM component cannot render here,
-    // so the paths are transcribed like every other icon in this file; the
-    // head flips to light on dark, matching PostHog's own dark treatment.
+    // The DOM-only brand component cannot render in React Native, so its paths are transcribed here.
     return (
       <Svg width={size} height={size} viewBox="0 0 52 28" fill="none">
         <Path

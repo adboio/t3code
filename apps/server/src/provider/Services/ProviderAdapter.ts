@@ -33,11 +33,7 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
-  /**
-   * Where the agent process and its filesystem live. Absent is `"local"`:
-   * the adapter runs against this environment's checkout, so local paths
-   * mean something to it.
-   */
+  /** Absent defaults to `"local"` for legacy adapters. */
   readonly execution?: ProviderExecutionLocality;
 }
 

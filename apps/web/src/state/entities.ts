@@ -269,11 +269,6 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
   );
 }
 
-/**
- * Whether the provider instance a thread is bound to runs its agent outside
- * this environment. Imperative twin of the derivation ChatView does in
- * render; menus read it at open time.
- */
 export function readProviderRunsRemotely(
   environmentId: EnvironmentId,
   instanceId: ProviderInstanceId | null | undefined,
