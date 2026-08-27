@@ -52,6 +52,7 @@ describe("DesktopEnvironment", () => {
 
       assert.equal(environment.isDevelopment, true);
       assert.equal(environment.appDataDirectory, "/Users/alice/Library/Application Support");
+      assert.equal(environment.userDataPath, "/Users/alice/Library/Application Support/t3code-dev");
       assert.equal(environment.baseDir, "/tmp/t3");
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
@@ -92,6 +93,7 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, false);
+      assert.equal(environment.userDataPath, "/Users/alice/Library/Application Support/t3code");
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
