@@ -1,45 +1,26 @@
 {
   "fill": {
-    "solid": "display-p3:0.00000,0.00000,0.00000,1.00000"
+    "solid": "display-p3:0.97647,0.93333,0.88235,1.00000"
   },
   "groups": [
     {
+      "blur-material": null,
       "layers": [
         {
-          "glass": true,
-          "image-name": "text.svg",
-          "name": "Text",
-          "position": {
-            "scale": 8.5,
-            "translation-in-points": [0, 0]
-          }
-        },
-        {
           "glass": false,
-          "image-name": "annotations.svg",
-          "name": "Annotations",
-          "position": {
-            "scale": 8.5,
-            "translation-in-points": [0, 0]
-          }
-        },
-        {
-          "glass": true,
-          "image-name": "background.svg",
-          "name": "Background",
-          "position": {
-            "scale": 8.1,
-            "translation-in-points": [0, 0]
-          }
+          "image-name": "logo.png",
+          "name": "logo"
         }
       ],
+      "lighting": "individual",
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.6
+        "opacity": 0.5
       },
+      "specular": true,
       "translucency": {
         "enabled": true,
-        "value": 0.2
+        "value": 0.5
       }
     }
   ],
