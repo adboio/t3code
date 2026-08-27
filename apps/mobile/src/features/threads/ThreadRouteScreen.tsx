@@ -6,8 +6,14 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  providerInstanceExecutesRemotely,
+  ThreadId,
+  type ProjectScript,
+} from "@t3tools/contracts";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -19,6 +25,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
+import { environmentServerConfigsAtom } from "../../state/server";
 
 import { EmptyState } from "../../components/EmptyState";
 import {
@@ -192,7 +199,14 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
-  const isCloudThread = String(selectedThread?.modelSelection.instanceId ?? "") === "posthogCloud";
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  // Same single fact the web client gates on: the provider declares whether
+  // its agent runs outside this environment, and every local-workspace
+  // affordance below follows from that.
+  const threadRunsRemotely = providerInstanceExecutesRemotely(
+    selectedThread ? serverConfigs.get(selectedThread.environmentId)?.providers : null,
+    selectedThread?.modelSelection.instanceId,
+  );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -228,7 +242,7 @@ function ThreadRouteContent(
   );
   const inspectorMode = (() => {
     if (inspectorSelection?.routeThreadIdentity === routeThreadIdentity) {
-      if (isCloudThread && inspectorSelection.mode !== "route") {
+      if (threadRunsRemotely && inspectorSelection.mode !== "route") {
         return null;
       }
       if (inspectorSelection.mode === "files" && selectedThreadCwd === null) {
@@ -241,7 +255,7 @@ function ThreadRouteContent(
   useEffect(() => {
     if (
       fileInspector.supported &&
-      (selectedThreadCwd === null || isCloudThread) &&
+      (selectedThreadCwd === null || threadRunsRemotely) &&
       inspectorMode === null &&
       panes.auxiliaryPaneVisible
     ) {
@@ -250,7 +264,7 @@ function ThreadRouteContent(
   }, [
     fileInspector.supported,
     inspectorMode,
-    isCloudThread,
+    threadRunsRemotely,
     panes.auxiliaryPaneVisible,
     selectedThreadCwd,
     toggleAuxiliaryPane,
@@ -502,10 +516,12 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
-  const canStopCloudRun =
-    isCloudThread && selectedThread?.session != null && selectedThread.session.status !== "stopped";
-  const handleStopCloudRun = useCallback(() => {
-    if (!selectedThread || !canStopCloudRun) return;
+  const canStopRemoteRun =
+    threadRunsRemotely &&
+    selectedThread?.session != null &&
+    selectedThread.session.status !== "stopped";
+  const handleStopRemoteRun = useCallback(() => {
+    if (!selectedThread || !canStopRemoteRun) return;
     Alert.alert(
       "Stop run?",
       "This shuts down its sandbox. You can resume the thread in a new run.",
@@ -523,7 +539,7 @@ function ThreadRouteContent(
         },
       ],
     );
-  }, [canStopCloudRun, selectedThread, stopThreadSession]);
+  }, [canStopRemoteRun, selectedThread, stopThreadSession]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -640,7 +656,7 @@ function ThreadRouteContent(
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
     auxiliaryPaneControl:
-      !isCloudThread &&
+      !threadRunsRemotely &&
       !layout.usesSplitView &&
       fileInspector.supported &&
       selectedThreadCwd !== null
@@ -650,19 +666,19 @@ function ThreadRouteContent(
           }
         : undefined,
     onOpenFilesInspector:
-      !isCloudThread && fileInspector.supported && selectedThreadCwd !== null
+      !threadRunsRemotely && fileInspector.supported && selectedThreadCwd !== null
         ? handleOpenFilesInspector
         : undefined,
     onOpenGitInspector:
-      !isCloudThread && fileInspector.supported ? handleOpenGitInspector : undefined,
-    currentBranch: isCloudThread ? null : (selectedThread?.branch ?? null),
+      !threadRunsRemotely && fileInspector.supported ? handleOpenGitInspector : undefined,
+    currentBranch: threadRunsRemotely ? null : (selectedThread?.branch ?? null),
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: !isCloudThread && Boolean(selectedThreadProject?.workspaceRoot),
-    canOpenFiles: !isCloudThread && Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: isCloudThread ? [] : (selectedThreadProject?.scripts ?? []),
-    terminalSessions: isCloudThread ? [] : terminalMenuSessions,
-    showDirectFileControl: !isCloudThread && layout.usesSplitView,
+    canOpenTerminal: !threadRunsRemotely && Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenFiles: !threadRunsRemotely && Boolean(selectedThreadProject?.workspaceRoot),
+    projectScripts: threadRunsRemotely ? [] : (selectedThreadProject?.scripts ?? []),
+    terminalSessions: threadRunsRemotely ? [] : terminalMenuSessions,
+    showDirectFileControl: !threadRunsRemotely && layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
@@ -673,18 +689,18 @@ function ThreadRouteContent(
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
   const cloudRunHeaderItems = useMemo<NativeHeaderItems>(
     () =>
-      canStopCloudRun
+      canStopRemoteRun
         ? [
             withNativeGlassHeaderItem({
               accessibilityLabel: "Stop run",
               icon: { name: "stop.fill", type: "sfSymbol" as const },
               identifier: "thread-cloud-stop-run",
-              onPress: handleStopCloudRun,
+              onPress: handleStopRemoteRun,
               type: "button" as const,
             }),
           ]
         : [],
-    [canStopCloudRun, handleStopCloudRun],
+    [canStopRemoteRun, handleStopRemoteRun],
   );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
@@ -738,12 +754,12 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
-    if (isCloudThread) {
-      if (canStopCloudRun) {
+    if (threadRunsRemotely) {
+      if (canStopRemoteRun) {
         actions.push({
           accessibilityLabel: "Stop run",
           icon: "stop",
-          onPress: handleStopCloudRun,
+          onPress: handleStopRemoteRun,
         });
       }
       return actions;
@@ -776,14 +792,14 @@ function ThreadRouteContent(
     }
     return actions;
   }, [
-    canStopCloudRun,
+    canStopRemoteRun,
     fileInspector.supported,
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
-    handleStopCloudRun,
+    handleStopRemoteRun,
     handleToggleInspector,
-    isCloudThread,
+    threadRunsRemotely,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
@@ -823,13 +839,13 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
-      {isCloudThread ? (
-        showActionControls && canStopCloudRun ? (
+      {threadRunsRemotely ? (
+        showActionControls && canStopRemoteRun ? (
           <NativeHeaderToolbar placement="right">
             <NativeHeaderToolbar.Button
               accessibilityLabel="Stop run"
               icon="stop.fill"
-              onPress={handleStopCloudRun}
+              onPress={handleStopRemoteRun}
               separateBackground
             />
           </NativeHeaderToolbar>
@@ -838,7 +854,7 @@ function ThreadRouteContent(
         <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
       )}
 
-      {!isCloudThread ? (
+      {!threadRunsRemotely ? (
         <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
       ) : null}
 
@@ -864,9 +880,9 @@ function ThreadRouteContent(
           loadEarlier={loadEarlierTurns}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={
-            isCloudThread ? null : (selectedThreadProject?.workspaceRoot ?? null)
+            threadRunsRemotely ? null : (selectedThreadProject?.workspaceRoot ?? null)
           }
-          threadCwd={isCloudThread ? null : selectedThreadCwd}
+          threadCwd={threadRunsRemotely ? null : selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
@@ -925,7 +941,7 @@ function ThreadRouteContent(
           unstable_headerRightItems:
             Platform.OS === "ios"
               ? () =>
-                  isCloudThread
+                  threadRunsRemotely
                     ? cloudRunHeaderItems
                     : layout.usesSplitView
                       ? threadCenterHeaderItems

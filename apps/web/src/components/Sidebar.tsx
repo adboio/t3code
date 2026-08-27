@@ -30,6 +30,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
+import { providerInstanceExecutesRemotely } from "@t3tools/contracts";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -3088,8 +3089,13 @@ export default function Sidebar() {
               isRegeneratingTitle,
               isRunning:
                 thread.session?.status === "running" && thread.session.activeTurnId != null,
+              // A remote run outlives the local session, so it is the only
+              // kind that can still be stopped from a menu.
               canStopRun:
-                String(thread.modelSelection.instanceId) === "posthogCloud" &&
+                providerInstanceExecutesRemotely(
+                  serverConfigs.get(thread.environmentId)?.providers,
+                  thread.modelSelection.instanceId,
+                ) &&
                 thread.session !== null &&
                 thread.session.status !== "stopped",
               supports: {

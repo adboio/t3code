@@ -11,6 +11,7 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderDriverKind,
+  ProviderExecutionLocality,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -32,6 +33,12 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /**
+   * Where the agent process and its filesystem live. Absent is `"local"`:
+   * the adapter runs against this environment's checkout, so local paths
+   * mean something to it.
+   */
+  readonly execution?: ProviderExecutionLocality;
 }
 
 export interface ProviderThreadTurnSnapshot {

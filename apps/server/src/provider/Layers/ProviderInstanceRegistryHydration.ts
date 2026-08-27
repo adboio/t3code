@@ -91,9 +91,8 @@ export const deriveProviderInstanceConfigMap = (
     const legacyKey = driver.driverKind as keyof ServerSettings["providers"];
     const legacyConfig = settings.providers[legacyKey];
     if (legacyConfig === undefined) {
-      if (driver.driverKind !== "posthogCloud") {
-        continue;
-      }
+      // A driver added after the legacy mirror was frozen has no entry to
+      // read: register its default slot so it is configurable at all.
       merged[instanceId] = {
         driver: driver.driverKind,
         config: driver.defaultConfig(),

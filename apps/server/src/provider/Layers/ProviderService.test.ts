@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import type {
   ProviderApprovalDecision,
+  ProviderExecutionLocality,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
@@ -93,7 +94,10 @@ type LegacyProviderRuntimeEvent = {
   readonly [key: string]: unknown;
 };
 
-function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
+function makeFakeCodexAdapter(
+  provider: ProviderDriverKind = CODEX_DRIVER,
+  options?: { readonly execution?: ProviderExecutionLocality },
+) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
@@ -219,6 +223,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      ...(options?.execution ? { execution: options.execution } : {}),
     },
     startSession,
     sendTurn,
@@ -289,12 +294,12 @@ function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
-  const cloud = makeFakeCodexAdapter(POSTHOG_CLOUD_DRIVER);
+  const remote = makeFakeCodexAdapter(POSTHOG_CLOUD_DRIVER, { execution: "remote" });
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
     [ProviderDriverKind.make("cursor")]: cursor.adapter,
-    [ProviderDriverKind.make("posthogCloud")]: cloud.adapter,
+    [ProviderDriverKind.make("posthogCloud")]: remote.adapter,
   });
 
   const providerAdapterLayer = Layer.succeed(
@@ -332,7 +337,7 @@ function makeProviderServiceLayer() {
     codex,
     claude,
     cursor,
-    cloud,
+    remote,
     layer,
   };
 }
@@ -1150,28 +1155,28 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const imageOnlyInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
       assert.equal(imageOnlyInput.input?.startsWith('[Attached image "screenshot.png"'), true);
 
-      const cloudSession = yield* provider.startSession(asThreadId("thread-cloud-attach"), {
+      const remoteSession = yield* provider.startSession(asThreadId("thread-remote-attach"), {
         provider: POSTHOG_CLOUD_DRIVER,
         providerInstanceId: posthogCloudInstanceId,
-        threadId: asThreadId("thread-cloud-attach"),
+        threadId: asThreadId("thread-remote-attach"),
         cwd: "/tmp/project",
         runtimeMode: "full-access",
       });
-      routing.cloud.sendTurn.mockClear();
+      routing.remote.sendTurn.mockClear();
       yield* provider.sendTurn({
-        threadId: cloudSession.threadId,
+        threadId: remoteSession.threadId,
         input: "use this screenshot",
         attachments: [attachment],
       });
-      const cloudInput = routing.cloud.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
-      assert.equal(cloudInput.input, "use this screenshot");
+      const remoteInput = routing.remote.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.equal(remoteInput.input, "use this screenshot");
       assert.equal(
-        cloudInput.resolvedAttachments?.[0]?.path.endsWith(`${attachment.id}.png`),
+        remoteInput.resolvedAttachments?.[0]?.path.endsWith(`${attachment.id}.png`),
         true,
       );
 
       yield* provider.stopSession({ threadId: session.threadId });
-      yield* provider.stopSession({ threadId: cloudSession.threadId });
+      yield* provider.stopSession({ threadId: remoteSession.threadId });
     }),
   );
 

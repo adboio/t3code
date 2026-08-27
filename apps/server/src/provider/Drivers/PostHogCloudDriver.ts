@@ -109,6 +109,9 @@ export const PostHogCloudDriver: ProviderDriver<PostHogCloudSettings, PostHogClo
           displayName: displayName ?? "PostHog Cloud",
           ...(accentColor ? { accentColor } : {}),
           badgeLabel: "Cloud",
+          // PostHog owns the sandbox: threads bound to this provider have no
+          // local checkout, and their runs outlive the local session.
+          execution: "remote",
           continuation: { groupKey: continuationIdentity.continuationKey },
           showInteractionModeToggle: false,
           requiresNewThreadForModelChange: true,

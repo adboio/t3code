@@ -799,8 +799,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
       });
+      // A remote adapter's agent cannot see this machine's filesystem, so the
+      // "[Attached … is saved at: <path>]" lines are noise there: it gets the
+      // untouched prompt plus the resolved attachments to upload itself.
       const adapterInput =
-        String(routed.adapter.provider) === "posthogCloud"
+        routed.adapter.capabilities.execution === "remote"
           ? { ...parsed, attachments, resolvedAttachments }
           : input;
       // A turn is the clearest sign a session is still alive. The MCP

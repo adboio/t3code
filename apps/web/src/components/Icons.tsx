@@ -1,3 +1,4 @@
+import { Logo } from "@posthog/brand/logo";
 import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
 
@@ -664,6 +665,17 @@ export const OpenCodeIcon: Icon = (props) => (
       </clipPath>
     </defs>
   </svg>
+);
+
+/**
+ * The PostHog hedgehog, straight from the brand package rather than a copied
+ * path. Its logomark is wider than it is tall (a 52x28 viewBox), so it
+ * letterboxes inside the square slot every other provider icon fills.
+ */
+export const PostHogIcon: Icon = ({ className, color: _color, ...props }) => (
+  // `color` is dropped: the gradient mark ignores it, and the brand props
+  // reject an explicit `undefined` under exactOptionalPropertyTypes.
+  <Logo {...props} layout="logomark" className={cn("shrink-0", className)} />
 );
 
 export const GithubCopilotIcon: Icon = ({ className, ...props }) => (

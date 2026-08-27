@@ -27,6 +27,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
+  readProviderRunsRemotely,
   readThreadShell,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
@@ -145,8 +146,10 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          // A remote run outlives the local session, so it is the only kind
+          // that can still be stopped from a menu.
           canStopRun:
-            String(thread.modelSelection.instanceId) === "posthogCloud" &&
+            readProviderRunsRemotely(threadRef.environmentId, thread.modelSelection.instanceId) &&
             thread.session !== null &&
             thread.session.status !== "stopped",
           supports,

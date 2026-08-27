@@ -121,6 +121,22 @@ export const ServerProviderContinuation = Schema.Struct({
 });
 export type ServerProviderContinuation = typeof ServerProviderContinuation.Type;
 
+/**
+ * Where a provider's agent process and its filesystem live.
+ *
+ *  - `local` — the agent runs in this environment against the thread's own
+ *    checkout. Every workspace affordance applies: terminal, diff, files,
+ *    git controls, checkpoints, workspace-relative paths.
+ *  - `remote` — the provider owns the sandbox, so a thread bound to it has
+ *    no local workspace and none of those affordances mean anything, and
+ *    its run outlives the local session (it has to be stopped explicitly).
+ *
+ * Absent means `local`: every legacy producer omits the field, and clients
+ * read it through `providerExecutesRemotely`.
+ */
+export const ProviderExecutionLocality = Schema.Literals(["local", "remote"]);
+export type ProviderExecutionLocality = typeof ProviderExecutionLocality.Type;
+
 export const ServerProviderVersionAdvisoryStatus = Schema.Literals([
   "unknown",
   "current",
@@ -171,6 +187,10 @@ export const ServerProvider = Schema.Struct({
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  // Absent is `"local"`; see ProviderExecutionLocality. Clients gate every
+  // local-workspace affordance on this one field rather than on the driver
+  // slug, so a new remote provider inherits the behavior for free.
+  execution: Schema.optional(ProviderExecutionLocality),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
@@ -212,6 +232,27 @@ export type ServerProviders = typeof ServerProviders.Type;
  */
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
+
+/** Absent `execution` means the provider runs locally. */
+export const providerExecutesRemotely = (snapshot: ServerProvider): boolean =>
+  snapshot.execution === "remote";
+
+/**
+ * Whether the provider instance a thread is bound to runs remotely. The
+ * single predicate behind every "this thread has no local workspace" gate in
+ * the clients; an unknown instance is treated as local, matching the default
+ * every provider snapshot carries.
+ */
+export const providerInstanceExecutesRemotely = (
+  providers: ReadonlyArray<ServerProvider> | null | undefined,
+  instanceId: ProviderInstanceId | string | null | undefined,
+): boolean => {
+  if (!providers || !instanceId) {
+    return false;
+  }
+  const snapshot = providers.find((candidate) => candidate.instanceId === instanceId);
+  return snapshot !== undefined && providerExecutesRemotely(snapshot);
+};
 
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,

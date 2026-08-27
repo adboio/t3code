@@ -36,7 +36,9 @@ Attachments are uploaded to the active PostHog TaskRun and passed as artifact id
 
 ## Cloud workspace
 
-Cloud threads do not expose a local terminal, local file tree, staging actions, checkpoints, rewind, or discard. Streamed file changes and diffs provide the working view until PostHog reports a branch or pull request, which then becomes the authoritative durable result.
+Cloud threads do not expose a local terminal, local file tree, staging actions, checkpoints, rewind, or discard.
+
+Clients do not decide that by recognising the PostHog Cloud provider. The provider declares `execution: "remote"` on its snapshot and its adapter capabilities, and both clients gate every local-workspace affordance on that one field through `providerInstanceExecutesRemotely`. The server reads the same capability when it decides whether local attachment paths belong in the prompt. Any future remote provider inherits the behavior by declaring the field; nothing keys on a driver slug. Streamed file changes and diffs provide the working view until PostHog reports a branch or pull request, which then becomes the authoritative durable result.
 
 The prototype starts Cloud threads from an existing t3 project and passes its GitHub repository identity to PostHog. The provider contract keeps repository identity separate from a local path so a future PostHog repository picker can create remote-only projects without changing thread identity.
 

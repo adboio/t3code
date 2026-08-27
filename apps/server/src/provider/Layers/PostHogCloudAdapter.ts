@@ -1114,7 +1114,7 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
     | ProviderAdapterValidationError
   > = {
     provider: PROVIDER,
-    capabilities: { sessionModelSwitch: "unsupported" },
+    capabilities: { sessionModelSwitch: "unsupported", execution: "remote" },
     startSession,
     sendTurn,
     interruptTurn,
