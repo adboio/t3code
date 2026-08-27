@@ -1,6 +1,7 @@
 import {
   PostHogCloudCommandResult,
   PostHogCloudModel,
+  type PostHogCloudPermissionMode,
   PostHogCloudRun,
   PostHogCloudRunArtifact,
   type PostHogCloudRunId,
@@ -42,6 +43,7 @@ interface RunCloudTaskInput {
   readonly runtimeAdapter: "claude" | "codex";
   readonly model: string;
   readonly reasoningEffort?: string;
+  readonly initialPermissionMode?: PostHogCloudPermissionMode;
   readonly artifactIds?: ReadonlyArray<string>;
 }
 
@@ -156,6 +158,9 @@ export const layer = Layer.effect(
           auto_publish: false,
           ...(input.resumeFromRunId ? { resume_from_run_id: input.resumeFromRunId } : {}),
           ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
+          ...(input.initialPermissionMode
+            ? { initial_permission_mode: input.initialPermissionMode }
+            : {}),
           ...(input.artifactIds?.length ? { pending_user_artifact_ids: input.artifactIds } : {}),
         },
       );

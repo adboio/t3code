@@ -7,11 +7,13 @@ import {
   ProviderInstanceId,
   RuntimeRequestId,
   RuntimeTaskId,
+  type PostHogCloudPermissionMode,
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
   type ProviderSessionStartInput,
   type ProviderUserInputAnswers,
+  type RuntimeMode,
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -84,6 +86,46 @@ function cloudModel(
     return undefined;
   }
   return { runtimeAdapter, model: rawModel };
+}
+
+/**
+ * Translate the thread's runtime mode into the permission mode PostHog boots
+ * the sandbox agent on. PostHog validates the value against the runtime
+ * adapter, so each adapter gets the vocabulary it owns.
+ *
+ * The targets mirror what the local adapters already do with the same mode:
+ * Claude's permission modes are the ones `ClaudeAdapter` passes its own SDK,
+ * and Codex's map onto the sandbox `CodexSessionRuntime` selects. Codex has no
+ * separate accept-edits mode — locally it shares `workspace-write` with `auto`
+ * and differs only in a reviewer setting PostHog does not expose — so the two
+ * collapse to `auto` here, matching the local behaviour rather than inventing
+ * a stricter one.
+ */
+function cloudPermissionMode(
+  runtimeMode: RuntimeMode,
+  runtimeAdapter: "claude" | "codex",
+): PostHogCloudPermissionMode {
+  if (runtimeAdapter === "codex") {
+    switch (runtimeMode) {
+      case "approval-required":
+        return "read-only";
+      case "auto-accept-edits":
+      case "auto":
+        return "auto";
+      case "full-access":
+        return "full-access";
+    }
+  }
+  switch (runtimeMode) {
+    case "approval-required":
+      return "default";
+    case "auto-accept-edits":
+      return "acceptEdits";
+    case "auto":
+      return "auto";
+    case "full-access":
+      return "bypassPermissions";
+  }
 }
 
 function permissionDecisionKind(decision: ProviderApprovalDecision): string {
@@ -699,6 +741,10 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
           ...(currentRun ? { resumeFromRunId: currentRun.id } : {}),
           runtimeAdapter: selected.runtimeAdapter,
           model: selected.model,
+          initialPermissionMode: cloudPermissionMode(
+            context.session.runtimeMode,
+            selected.runtimeAdapter,
+          ),
           ...(getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
             ? {
                 reasoningEffort: getModelSelectionStringOptionValue(

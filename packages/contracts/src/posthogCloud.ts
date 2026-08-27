@@ -70,6 +70,33 @@ export const PostHogCloudModel = Schema.Struct({
 });
 export type PostHogCloudModel = typeof PostHogCloudModel.Type;
 
+/**
+ * Permission modes PostHog accepts on `POST /tasks/:id/run/`. The legal set
+ * depends on the runtime adapter the run launches — PostHog rejects a value
+ * the adapter does not own — so callers pick from the matching constant
+ * rather than from the union.
+ */
+export const PostHogCloudClaudePermissionMode = Schema.Literals([
+  "default",
+  "acceptEdits",
+  "plan",
+  "bypassPermissions",
+  "auto",
+]);
+export type PostHogCloudClaudePermissionMode = typeof PostHogCloudClaudePermissionMode.Type;
+
+export const PostHogCloudCodexPermissionMode = Schema.Literals([
+  "plan",
+  "auto",
+  "read-only",
+  "full-access",
+]);
+export type PostHogCloudCodexPermissionMode = typeof PostHogCloudCodexPermissionMode.Type;
+
+export type PostHogCloudPermissionMode =
+  | PostHogCloudClaudePermissionMode
+  | PostHogCloudCodexPermissionMode;
+
 export const PostHogCloudRuntimePayload = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   taskId: Schema.optional(PostHogCloudTaskId),

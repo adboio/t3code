@@ -784,4 +784,75 @@ describe("PostHogCloudAdapter", () => {
       }),
     ).pipe(Effect.provide(NodeServices.layer));
   });
+
+  // PostHog validates initial_permission_mode against the runtime adapter, so a
+  // Claude-shaped value on a Codex run is a 400 rather than a silent downgrade.
+  const permissionModeCases = [
+    { runtimeMode: "approval-required", claude: "default", codex: "read-only" },
+    { runtimeMode: "auto-accept-edits", claude: "acceptEdits", codex: "auto" },
+    { runtimeMode: "auto", claude: "auto", codex: "auto" },
+    { runtimeMode: "full-access", claude: "bypassPermissions", codex: "full-access" },
+  ] as const;
+
+  for (const { runtimeMode, claude, codex } of permissionModeCases) {
+    for (const [runtimeAdapter, expected] of [
+      ["claude", claude],
+      ["codex", codex],
+    ] as const) {
+      it.effect(
+        `sends ${runtimeAdapter} permission mode "${expected}" for runtime mode "${runtimeMode}"`,
+        () => {
+          const runCalls: Array<Parameters<PostHogCloudClient["Service"]["runTask"]>[0]> = [];
+          const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
+          const posthog = PostHogCloudClient.of({
+            listModels: unused,
+            createTask: unused,
+            runTask: (input) =>
+              Effect.sync(() => {
+                runCalls.push(input);
+                return cloudTask(cloudRun(runOneId, "in_progress"));
+              }),
+            getRun: unused,
+            commandRun: unused,
+            cancelRun: unused,
+            uploadRunArtifacts: unused,
+            readRunLogs: () => Effect.succeed(""),
+            streamRun: () => Effect.succeed(Stream.never),
+          });
+
+          return Effect.scoped(
+            Effect.gen(function* () {
+              const threadId = ThreadId.make(`permission-${runtimeAdapter}-${runtimeMode}`);
+              const modelSelection = {
+                instanceId: ProviderInstanceId.make("posthogCloud"),
+                model: `${runtimeAdapter}:some-model`,
+              };
+              const adapter = yield* makePostHogCloudAdapter({
+                instanceId: modelSelection.instanceId,
+                posthog,
+                fileSystem: FileSystem.makeNoop({}),
+              });
+              yield* adapter.startSession({
+                threadId,
+                provider: ProviderDriverKind.make("posthogCloud"),
+                runtimeMode,
+                modelSelection,
+                runtimePayload: { schemaVersion: 1, taskId },
+              });
+
+              yield* adapter.sendTurn({
+                threadId,
+                input: "Start the work",
+                attachments: [],
+                modelSelection,
+              });
+
+              assert.equal(runCalls.length, 1);
+              assert.equal(runCalls[0]?.initialPermissionMode, expected);
+            }),
+          ).pipe(Effect.provide(NodeServices.layer));
+        },
+      );
+    }
+  }
 });
