@@ -1,6 +1,8 @@
 import {
+  ForwardCompatibleArray,
   PostHogCloudCommandResult,
   PostHogCloudModel,
+  PostHogGatewayModel,
   type PostHogCloudPermissionMode,
   PostHogCloudRun,
   PostHogCloudRunArtifact,
@@ -22,8 +24,15 @@ import { decodePostHogSse } from "./PostHogSse.ts";
 import { PostHogTransport } from "./PostHogTransport.ts";
 
 const CloudModelsBody = Schema.Struct({ models: Schema.Array(PostHogCloudModel) });
+// The gateway answers OpenAI-style `{ data: [...] }`. Unknown entries are
+// dropped rather than failing the list: one malformed model must not cost the
+// catalogue.
+const GatewayModelsBody = Schema.Struct({
+  data: ForwardCompatibleArray(PostHogGatewayModel),
+});
 const CloudArtifactsBody = Schema.Struct({ artifacts: Schema.Array(PostHogCloudRunArtifact) });
 const decodeCloudModels = Schema.decodeUnknownEffect(CloudModelsBody);
+const decodeGatewayModels = Schema.decodeUnknownEffect(GatewayModelsBody);
 const decodeCloudTask = Schema.decodeUnknownEffect(PostHogCloudTask);
 const decodeCloudRun = Schema.decodeUnknownEffect(PostHogCloudRun);
 const decodeCloudCommandResult = Schema.decodeUnknownEffect(PostHogCloudCommandResult);
@@ -75,6 +84,15 @@ export class PostHogCloudClient extends Context.Service<
   PostHogCloudClient,
   {
     readonly listModels: () => Effect.Effect<ReadonlyArray<PostHogCloudModel>, PostHogRpcError>;
+    /**
+     * The gateway's raw catalogue, which is wider than `listModels`: it also
+     * carries the models PostHog serves through the Claude harness under a
+     * provider the task API has no runtime adapter for.
+     */
+    readonly listGatewayModels: () => Effect.Effect<
+      ReadonlyArray<PostHogGatewayModel>,
+      PostHogRpcError
+    >;
     readonly createTask: (
       input: CreateCloudTaskInput,
     ) => Effect.Effect<PostHogCloudTask, PostHogRpcError>;
@@ -103,6 +121,61 @@ export const layer = Layer.effect(
   PostHogCloudClient,
   Effect.gen(function* () {
     const transport = yield* PostHogTransport;
+
+    /**
+     * The LLM gateway that serves this PostHog host.
+     *
+     * Mirrors `getCloudTaskGatewayUrl` in the PostHog monorepo
+     * (`products/desktop/packages/shared/src/cloud-task-models.ts`): the
+     * gateway lives on its own hostname per region, under the same
+     * `posthog_code` product a task run authenticates as.
+     */
+    const gatewayUrl = (host: string): string => {
+      const url = new URL(host);
+      if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+        return `${url.protocol}//localhost:3308/posthog_code`;
+      }
+      if (url.hostname === "host.docker.internal") {
+        return `${url.protocol}//host.docker.internal:3308/posthog_code`;
+      }
+      if (url.hostname === "app.dev.posthog.dev") {
+        return "https://gateway.dev.posthog.dev/posthog_code";
+      }
+      const region = /^(us|eu)\.posthog\.com$/.exec(url.hostname)?.[1] ?? "us";
+      return `https://gateway.${region}.posthog.com/posthog_code`;
+    };
+
+    const listGatewayModels: PostHogCloudClient["Service"]["listGatewayModels"] = Effect.fn(
+      "PostHogCloudClient.listGatewayModels",
+    )(function* () {
+      const connection = yield* transport.connection;
+      const response = yield* transport.execute(
+        connection,
+        HttpClientRequest.get(`${gatewayUrl(connection.host)}/v1/models`).pipe(
+          HttpClientRequest.setHeader("x-posthog-project-id", connection.projectId),
+        ),
+        "for the model gateway",
+      );
+      const body = yield* response.json.pipe(
+        Effect.mapError(
+          (cause) =>
+            new PostHogRequestError({
+              message: "The model gateway returned an unreadable body.",
+              cause,
+            }),
+        ),
+      );
+      const decoded = yield* decodeGatewayModels(body).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PostHogRequestError({
+              message: "The model gateway returned an unexpected catalogue.",
+              cause,
+            }),
+        ),
+      );
+      return decoded.data;
+    });
 
     const listModels: PostHogCloudClient["Service"]["listModels"] = Effect.fn(
       "PostHogCloudClient.listModels",
@@ -293,6 +366,7 @@ export const layer = Layer.effect(
 
     return PostHogCloudClient.of({
       listModels,
+      listGatewayModels,
       createTask,
       runTask,
       getRun,

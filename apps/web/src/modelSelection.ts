@@ -75,6 +75,8 @@ export interface AppModelOption {
   name: string;
   shortName?: string;
   subProvider?: string;
+  subProviderDriverKind?: ProviderDriverKind;
+  isOpenWeight?: boolean;
   isCustom: boolean;
   isDefault?: boolean;
   isLegacy?: boolean;
@@ -88,6 +90,8 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   };
   if (model.shortName) option.shortName = model.shortName;
   if (model.subProvider) option.subProvider = model.subProvider;
+  if (model.subProviderDriverKind) option.subProviderDriverKind = model.subProviderDriverKind;
+  if (model.isOpenWeight) option.isOpenWeight = true;
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
   return option;

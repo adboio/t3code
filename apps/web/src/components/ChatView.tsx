@@ -208,6 +208,7 @@ import { getProviderModelCapabilities, resolveSelectableProvider } from "../prov
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
   NO_PROVIDER_MODEL_SELECTION,
 } from "../providerInstances";
 import {
@@ -241,6 +242,7 @@ import {
   type DraftThreadEnvMode,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
+  useComposerDraftModelState,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
@@ -299,7 +301,11 @@ import {
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
-  shouldShowEnvironmentIndicator,
+  shouldShowRunTarget,
+  buildRunTargetOptions,
+  resolveCloudRepositoryLabel,
+  resolveRunTargetValue,
+  type RunTargetOption,
 } from "./BranchToolbar.logic";
 import {
   getProviderStatusBannerKey,
@@ -1387,6 +1393,9 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  // Per-instance model memory. Switching run targets reads back whichever
+  // model that instance was last set to instead of dropping to its default.
+  const composerDraftModelState = useComposerDraftModelState(composerDraftTarget);
   const composerHasUnsentContent = useComposerDraftStore((store) =>
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
   );
@@ -1616,11 +1625,20 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  // The instance that will actually serve the next turn. A live session is
+  // authoritative; before one exists the composer's own pick wins, so
+  // choosing a cloud runtime swaps the workspace controls immediately
+  // instead of waiting for the first send.
+  const activeRunProviderInstanceId =
+    activeThread?.session?.providerInstanceId ??
+    composerActiveProvider ??
+    activeThread?.modelSelection.instanceId ??
+    null;
   const workspaceCapabilities = threadWorkspaceCapabilities({
     providers: activeThread
       ? environmentById.get(activeThread.environmentId)?.serverConfig?.providers
       : null,
-    providerInstanceId: activeThread?.modelSelection.instanceId,
+    providerInstanceId: activeRunProviderInstanceId,
     session: activeThread?.session,
   });
   const { hasLocalWorkspace, runsRemotely: threadRunsRemotely } = workspaceCapabilities;
@@ -1983,47 +2001,6 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [retryEnvironment],
   );
-  const logicalProjectEnvironments = useMemo(() => {
-    if (!activeProject) return [];
-    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
-    const memberProjects = allProjects.filter(
-      (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
-    );
-    const seen = new Set<string>();
-    const envs: Array<{
-      environmentId: EnvironmentId;
-      projectId: ProjectId;
-      label: string;
-      isPrimary: boolean;
-    }> = [];
-    for (const p of memberProjects) {
-      if (seen.has(p.environmentId)) continue;
-      seen.add(p.environmentId);
-      const isPrimary = p.environmentId === primaryEnvironmentId;
-      const label = environmentById.get(p.environmentId)?.label ?? p.environmentId;
-      envs.push({
-        environmentId: p.environmentId,
-        projectId: p.id,
-        label,
-        isPrimary,
-      });
-    }
-    // Sort: primary first, then alphabetical
-    envs.sort((a, b) => {
-      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
-      return a.label.localeCompare(b.label);
-    });
-    return envs;
-  }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
-  const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  const activeEnvironmentOption =
-    logicalProjectEnvironments.find(
-      (environment) => environment.environmentId === activeThread?.environmentId,
-    ) ?? null;
-  const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
-  });
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -2341,6 +2318,46 @@ function ChatViewContent(props: ChatViewProps) {
     selectedProviderByThreadId ?? threadProvider,
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  // Run targets: the machines this logical project exists on, plus every
+  // configured provider instance that executes off-machine. Both answer the
+  // same question — where does this thread's work happen — so they share one
+  // control instead of leaking the distinction into the model picker.
+  const cloudRunTargetInstances = useMemo(
+    () =>
+      deriveProviderInstanceEntries(providerStatuses)
+        .filter(
+          (entry) =>
+            entry.executesRemotely &&
+            // Picker-ready, not merely enabled: an unconfigured cloud
+            // provider reports `warning`, and offering it as a run target
+            // would hand the user a destination that cannot accept the work.
+            // The thread's own runtime stays listed either way, so a
+            // provider that goes unready never leaves the strip unable to
+            // say where the work happens.
+            (isProviderInstancePickerReady(entry) ||
+              entry.instanceId === activeRunProviderInstanceId),
+        )
+        .map((entry) => ({
+          instanceId: entry.instanceId,
+          displayName: entry.displayName,
+          driverKind: entry.driverKind,
+          accentColor: entry.accentColor,
+        })),
+    [activeRunProviderInstanceId, providerStatuses],
+  );
+  const runTargetOptions = useMemo(
+    () =>
+      buildRunTargetOptions({
+        machineLabel: activeEnvironment?.label ?? "This machine",
+        cloudInstances: cloudRunTargetInstances,
+      }),
+    [activeEnvironment?.label, cloudRunTargetInstances],
+  );
+  const activeRunTargetValue = resolveRunTargetValue(
+    threadRunsRemotely ? (activeRunProviderInstanceId ?? null) : null,
+  );
+  const showComposerRunTarget = shouldShowRunTarget(runTargetOptions);
+  const cloudRepositoryLabel = resolveCloudRepositoryLabel(activeProject?.repositoryIdentity);
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const activeContextWindow = useMemo(
@@ -2898,7 +2915,7 @@ function ChatViewContent(props: ChatViewProps) {
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo: showComposerGitControls,
-    showEnvironmentIndicator: showComposerEnvironmentIndicator,
+    showRunTarget: showComposerRunTarget,
   });
   const initialDiffPanelGitScope =
     gitStatusQuery.data?.hasWorkingTreeChanges === true ? "unstaged" : "branch";
@@ -2945,23 +2962,6 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread &&
     (activeThread.messages.length > 0 ||
       (activeThread.session !== null && activeThread.session.status !== "stopped")),
-  );
-
-  // Handle environment change for draft threads.  When the user picks a
-  // different environment we update the draft context to point at the physical
-  // project in that environment while keeping the same logical project.
-  const onEnvironmentChange = useCallback(
-    (nextEnvironmentId: EnvironmentId) => {
-      if (envLocked || !draftId) return;
-      const target = logicalProjectEnvironments.find(
-        (env) => env.environmentId === nextEnvironmentId,
-      );
-      if (!target) return;
-      setDraftThreadContext(draftId, {
-        projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      });
-    },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
   );
 
   const activeTerminalGroup =
@@ -6677,6 +6677,45 @@ function ChatViewContent(props: ChatViewProps) {
       settings,
     ],
   );
+  /**
+   * Move the thread's work between this machine and a cloud runtime. Either
+   * direction restores whichever model that side was last set to, so the
+   * switch is a door rather than a reset.
+   */
+  const onRunTargetChange = useCallback(
+    (option: RunTargetOption) => {
+      if (option.kind === "cloud") {
+        onProviderModelSelect(
+          option.instanceId,
+          composerDraftModelState.modelSelectionByProvider[option.instanceId]?.model ?? "",
+        );
+        return;
+      }
+      if (threadRunsRemotely) {
+        const localEntries = applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(providerStatuses),
+          settings,
+        ).filter((entry) => !entry.executesRemotely && isProviderInstancePickerReady(entry));
+        const previousLocalInstanceId = localEntries.find(
+          (entry) => composerDraftModelState.modelSelectionByProvider[entry.instanceId],
+        )?.instanceId;
+        const nextLocalInstanceId = previousLocalInstanceId ?? localEntries[0]?.instanceId;
+        if (nextLocalInstanceId) {
+          onProviderModelSelect(
+            nextLocalInstanceId,
+            composerDraftModelState.modelSelectionByProvider[nextLocalInstanceId]?.model ?? "",
+          );
+        }
+      }
+    },
+    [
+      composerDraftModelState.modelSelectionByProvider,
+      onProviderModelSelect,
+      providerStatuses,
+      settings,
+      threadRunsRemotely,
+    ],
+  );
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (canOverrideServerThreadEnvMode) {
@@ -7255,8 +7294,10 @@ function ChatViewContent(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                   : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                                availableEnvironments={logicalProjectEnvironments}
+                                runTargetOptions={runTargetOptions}
+                                runTargetValue={activeRunTargetValue}
+                                cloudRepositoryLabel={cloudRepositoryLabel}
+                                {...(runTargetOptions.length > 1 ? { onRunTargetChange } : {})}
                               />
                             </div>
                           )}

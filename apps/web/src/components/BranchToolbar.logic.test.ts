@@ -19,7 +19,10 @@ import {
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
-  shouldShowEnvironmentIndicator,
+  shouldShowRunTarget,
+  buildRunTargetOptions,
+  resolveCloudRepositoryLabel,
+  resolveRunTargetValue,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -385,71 +388,107 @@ describe("resolveEnvironmentOptionLabel", () => {
   });
 });
 
-describe("shouldShowEnvironmentIndicator", () => {
-  it("shows the indicator whenever multiple environments are pickable", () => {
-    expect(
-      shouldShowEnvironmentIndicator({
-        activeEnvironment: { isPrimary: true },
-        canPickEnvironment: true,
-      }),
-    ).toBe(true);
+const machineTarget = {
+  kind: "machine" as const,
+  value: "machine" as const,
+  label: "MacBook",
+};
+const cloudTarget = {
+  kind: "cloud" as const,
+  value: "cloud:posthogCloud",
+  label: "PostHog Cloud",
+  instanceId: "posthogCloud" as never,
+  driverKind: "posthogCloud" as never,
+};
+
+describe("shouldShowRunTarget", () => {
+  it("shows the control once a cloud runtime joins this machine", () => {
+    expect(shouldShowRunTarget([machineTarget, cloudTarget])).toBe(true);
   });
 
-  it("shows a sole remote environment so the user knows where the project runs", () => {
-    expect(
-      shouldShowEnvironmentIndicator({
-        activeEnvironment: { isPrimary: false },
-        canPickEnvironment: false,
-      }),
-    ).toBe(true);
+  it("stays hidden when this machine is the only place work can happen", () => {
+    expect(shouldShowRunTarget([machineTarget])).toBe(false);
+  });
+});
+
+describe("buildRunTargetOptions", () => {
+  it("lists this machine first and namespaces cloud values", () => {
+    const options = buildRunTargetOptions({
+      machineLabel: "MacBook",
+      cloudInstances: [
+        {
+          instanceId: "posthogCloud" as never,
+          displayName: "PostHog Cloud",
+          driverKind: "posthogCloud" as never,
+        },
+      ],
+    });
+    expect(options.map((option) => [option.kind, option.value, option.label])).toEqual([
+      ["machine", "machine", "MacBook"],
+      ["cloud", "cloud:posthogCloud", "PostHog Cloud"],
+    ]);
   });
 
-  it("hides a sole primary (this-device) environment", () => {
-    expect(
-      shouldShowEnvironmentIndicator({
-        activeEnvironment: { isPrimary: true },
-        canPickEnvironment: false,
-      }),
-    ).toBe(false);
+  it("always offers this machine so a cloud thread has a way back", () => {
+    expect(buildRunTargetOptions({ machineLabel: "MacBook", cloudInstances: [] })).toEqual([
+      { kind: "machine", value: "machine", label: "MacBook" },
+    ]);
+  });
+});
+
+describe("resolveRunTargetValue", () => {
+  it("reads as the cloud runtime whenever the provider executes remotely", () => {
+    expect(resolveRunTargetValue("posthogCloud" as never)).toBe("cloud:posthogCloud");
   });
 
-  it("hides the indicator when the active environment is unknown", () => {
+  it("falls back to this machine for local providers", () => {
+    expect(resolveRunTargetValue(null)).toBe("machine");
+  });
+});
+
+describe("resolveCloudRepositoryLabel", () => {
+  it("returns owner/name for a resolved GitHub identity", () => {
     expect(
-      shouldShowEnvironmentIndicator({
-        activeEnvironment: null,
-        canPickEnvironment: false,
-      }),
-    ).toBe(false);
+      resolveCloudRepositoryLabel({ provider: "github", owner: "PostHog", name: "posthog" }),
+    ).toBe("PostHog/posthog");
+  });
+
+  it("returns null when the identity cannot produce what a cloud run needs", () => {
+    expect(resolveCloudRepositoryLabel({ provider: "github", owner: "PostHog" })).toBeNull();
+    expect(
+      resolveCloudRepositoryLabel({ provider: "gitlab", owner: "PostHog", name: "posthog" }),
+    ).toBeNull();
+    expect(resolveCloudRepositoryLabel(null)).toBeNull();
   });
 });
 
 describe("shouldShowComposerContextStrip", () => {
-  it("keeps the environment indicator visible for a non-Git project", () => {
+  it("keeps the run target visible for a non-Git project", () => {
     expect(
       shouldShowComposerContextStrip({
         hasActiveProject: true,
         isGitRepo: false,
-        showEnvironmentIndicator: true,
+        showRunTarget: true,
       }),
     ).toBe(true);
   });
 
-  it("hides the strip when a non-Git project has no environment indicator", () => {
+  it("hides the strip when a non-Git project has no run target to show", () => {
     expect(
       shouldShowComposerContextStrip({
         hasActiveProject: true,
         isGitRepo: false,
-        showEnvironmentIndicator: false,
+        showRunTarget: false,
       }),
     ).toBe(false);
   });
 
-  it("shows Git controls without requiring an environment indicator", () => {
+  it("shows Git controls without requiring a run target", () => {
     expect(
       shouldShowComposerContextStrip({
         hasActiveProject: true,
         isGitRepo: true,
-        showEnvironmentIndicator: false,
+        showRunTarget: false,
       }),
     ).toBe(true);
   });

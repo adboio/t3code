@@ -1,4 +1,10 @@
-import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  VcsRef,
+  ProjectId,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
@@ -46,20 +52,97 @@ export function resolveEnvironmentOptionLabel(input: {
 // A remote (non-primary) environment is always surfaced, even when it is the
 // only environment available: with a single connected machine there is nothing
 // to pick, but the user still needs to see where the project runs.
-export function shouldShowEnvironmentIndicator(input: {
-  activeEnvironment: Pick<EnvironmentOption, "isPrimary"> | null;
-  canPickEnvironment: boolean;
-}): boolean {
-  if (input.canPickEnvironment) return true;
-  return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
+/**
+ * One answer to "where does this thread's work happen".
+ *
+ * `machine` is the environment the thread already belongs to: the agent runs
+ * there, against a real checkout. `cloud` is a provider instance that
+ * executes remotely (PostHog Cloud today): the thread keeps its environment —
+ * that is where its repository identity comes from — and only the agent
+ * moves off-machine.
+ */
+export type RunTargetOption =
+  | { readonly kind: "machine"; readonly value: "machine"; readonly label: string }
+  | {
+      readonly kind: "cloud";
+      readonly value: string;
+      readonly label: string;
+      readonly instanceId: ProviderInstanceId;
+      readonly driverKind: ProviderDriverKind;
+      readonly accentColor?: string | undefined;
+    };
+
+export const LOCAL_RUN_TARGET_VALUE = "machine";
+
+/** Select values are a single namespace, so cloud targets carry a prefix. */
+export const runTargetValueForCloudInstance = (instanceId: ProviderInstanceId): string =>
+  `cloud:${instanceId}`;
+
+export function buildRunTargetOptions(input: {
+  machineLabel: string;
+  cloudInstances: readonly {
+    instanceId: ProviderInstanceId;
+    displayName: string;
+    driverKind: ProviderDriverKind;
+    accentColor?: string | undefined;
+  }[];
+}): readonly RunTargetOption[] {
+  return [
+    { kind: "machine", value: LOCAL_RUN_TARGET_VALUE, label: input.machineLabel },
+    ...input.cloudInstances.map(
+      (instance): RunTargetOption => ({
+        kind: "cloud",
+        value: runTargetValueForCloudInstance(instance.instanceId),
+        label: instance.displayName,
+        instanceId: instance.instanceId,
+        driverKind: instance.driverKind,
+        ...(instance.accentColor ? { accentColor: instance.accentColor } : {}),
+      }),
+    ),
+  ];
+}
+
+/** A thread whose provider executes remotely reads as that cloud target. */
+export function resolveRunTargetValue(remoteProviderInstanceId: ProviderInstanceId | null): string {
+  return remoteProviderInstanceId
+    ? runTargetValueForCloudInstance(remoteProviderInstanceId)
+    : LOCAL_RUN_TARGET_VALUE;
+}
+
+/** Nothing to say when this machine is the only place work can happen. */
+export function shouldShowRunTarget(options: readonly RunTargetOption[]): boolean {
+  return options.length > 1;
+}
+
+/**
+ * The `owner/name` a cloud run will actually receive.
+ *
+ * Mirrors the server's own rule in `ProviderCommandReactor`: only a GitHub
+ * identity with both halves resolved is sent as the task's `repository`.
+ * Anything else returns null, and the strip says so rather than implying a
+ * repo the run will not get.
+ */
+export function resolveCloudRepositoryLabel(
+  identity:
+    | {
+        readonly provider?: string | undefined;
+        readonly owner?: string | undefined;
+        readonly name?: string | undefined;
+      }
+    | null
+    | undefined,
+): string | null {
+  if (identity?.provider !== "github") return null;
+  if (!identity.owner || !identity.name) return null;
+  return `${identity.owner}/${identity.name}`;
 }
 
 export function shouldShowComposerContextStrip(input: {
   hasActiveProject: boolean;
   isGitRepo: boolean;
-  showEnvironmentIndicator: boolean;
+  showRunTarget: boolean;
 }): boolean {
-  return input.hasActiveProject && (input.isGitRepo || input.showEnvironmentIndicator);
+  return input.hasActiveProject && (input.isGitRepo || input.showRunTarget);
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {

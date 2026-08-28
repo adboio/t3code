@@ -16,6 +16,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
+  providerExecutesRemotely,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
@@ -61,6 +62,13 @@ export interface ProviderInstanceEntry {
   readonly isDefault: boolean;
   /** True when `availability === "unavailable"` is absent or "available". */
   readonly isAvailable: boolean;
+  /**
+   * True when turns run off this machine entirely (PostHog Cloud today).
+   * The composer treats this as the run target axis: a remote instance has
+   * no local worktree, terminal, or diff, so it never shares a picker rail
+   * with the locally-installed harnesses.
+   */
+  readonly executesRemotely: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
@@ -194,6 +202,7 @@ export function deriveProviderInstanceEntries(
       status: snapshot.status,
       isDefault,
       isAvailable: snapshot.availability !== "unavailable",
+      executesRemotely: providerExecutesRemotely(snapshot),
       snapshot,
       models: snapshot.models,
     } satisfies ProviderInstanceEntry;

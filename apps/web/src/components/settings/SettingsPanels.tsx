@@ -1874,9 +1874,12 @@ export function GeneralSettingsPanel() {
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
+  // Text generation is a local, synchronous call the app makes on its own
+  // behalf. A remotely-executed provider only serves whole threads and
+  // refuses these operations outright, so it never belongs in this list.
   const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
-  );
+  ).filter((entry) => !entry.executesRemotely);
   const textGenInstanceEntry = textGenerationModelInstanceEntries.find(
     (entry) => entry.instanceId === textGenInstanceId,
   );

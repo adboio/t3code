@@ -1,6 +1,6 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
-import { StarIcon } from "lucide-react";
+import { CodeXmlIcon, StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
@@ -22,11 +22,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
   /** Driver kind of the instance — used for the provider icon glyph. */
   driverKind: ProviderDriverKind;
   /**
-   * Display name to show in the secondary line (provider footer). Usually
-   * the instance's configured `displayName` so custom instances like
-   * "Codex Personal" render with their user-authored label.
+   * Secondary line under the model name: the instance serving this model,
+   * so custom instances like "Codex Personal" render with their
+   * user-authored label.
    */
-  providerDisplayName: string;
+  providerLabel: string;
   providerAccentColor?: string | undefined;
   isFavorite: boolean;
   isSelected: boolean;
@@ -39,9 +39,17 @@ export const ModelListRow = memo(function ModelListRow(props: {
   onToggleFavorite: () => void;
 }) {
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
-  const providerLabel = props.model.subProvider
-    ? `${props.providerDisplayName} · ${props.model.subProvider}`
-    : props.providerDisplayName;
+  // Only when the model's own vendor differs from the instance serving it —
+  // a remote runtime brokering someone else's models. Otherwise the title
+  // line would just repeat the mark already sitting under it.
+  const ModelVendorIcon =
+    props.model.subProviderDriverKind && props.model.subProviderDriverKind !== props.driverKind
+      ? (PROVIDER_ICON_BY_PROVIDER[props.model.subProviderDriverKind] ?? null)
+      : // An open-weight model has no lab of its own to credit, and wearing
+        // its harness's mark would credit the wrong one.
+        props.model.isOpenWeight
+        ? CodeXmlIcon
+        : null;
 
   const row = (
     <ComboboxItem
@@ -58,7 +66,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
       )}
     >
       <div className="min-w-0 flex-1 text-left">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {ModelVendorIcon ? <ModelVendorIcon className="size-3.5 shrink-0" /> : null}
           <div className="min-w-0 truncate text-xs font-medium leading-snug">
             {props.useTriggerLabel
               ? getTriggerDisplayModelLabel(props.model)
@@ -78,9 +87,15 @@ export const ModelListRow = memo(function ModelListRow(props: {
         </div>
         {props.showProvider && (
           <div className="mt-1 flex items-center gap-1.5">
-            {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
+            {ProviderIcon ? (
+              <ProviderIcon
+                // Matched to the vendor mark above it so the two stack into
+                // a column and both labels start on the same edge.
+                className={cn("shrink-0", ModelVendorIcon ? "size-3.5" : "size-3")}
+              />
+            ) : null}
             <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
-              {providerLabel}
+              {props.providerLabel}
             </span>
           </div>
         )}

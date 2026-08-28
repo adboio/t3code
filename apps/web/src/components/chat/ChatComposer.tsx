@@ -994,6 +994,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
   );
   const selectedModelForPicker = selectedModel;
+  // The run target is chosen in the context strip, so the picker only ever
+  // offers models from the side the thread is already on: locally installed
+  // harnesses, or the one remote runtime it is pointed at. Without this the
+  // rail mixes "which CLI" with "which machine" and lists the same model
+  // twice under two different answers.
+  const pickerInstanceEntries = useMemo(() => {
+    const selectedEntryRunsRemotely = selectedProviderEntry?.executesRemotely ?? false;
+    return providerInstanceEntries.filter((entry) =>
+      selectedEntryRunsRemotely ? entry.instanceId === selectedInstanceId : !entry.executesRemotely,
+    );
+  }, [providerInstanceEntries, selectedInstanceId, selectedProviderEntry?.executesRemotely]);
   // Instance-keyed option list so the picker can show each configured
   // instance (built-in + custom) as a first-class sidebar entry. The
   // options are server-reported models plus that exact instance's
@@ -3492,7 +3503,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       model={selectedModelForPickerWithCustomFallback}
                       lockedProvider={lockedProvider}
                       lockedContinuationGroupKey={lockedContinuationGroupKey}
-                      instanceEntries={providerInstanceEntries}
+                      instanceEntries={pickerInstanceEntries}
                       keybindings={keybindings}
                       modelOptionsByInstance={modelOptionsByInstance}
                       triggerClassName="-ms-2.5"

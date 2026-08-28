@@ -60,9 +60,11 @@ export function SourceControlWritingSettingsSection() {
     resolvedSourceControlWriterSelection === settings.textGenerationModelSelection
       ? defaultModelSelection
       : resolvedSourceControlWriterSelection;
+  // Same rule as the global text generation model: a remotely-executed
+  // provider serves whole threads only and rejects these calls.
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
-  );
+  ).filter((entry) => !entry.executesRemotely);
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     serverProviders,

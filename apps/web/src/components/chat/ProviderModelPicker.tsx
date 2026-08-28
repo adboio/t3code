@@ -4,6 +4,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
+import { CodeXmlIcon } from "lucide-react";
 import type { VariantProps } from "class-variance-authority";
 import { buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -69,6 +70,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
+  // When a remote runtime brokers someone else's model, the trigger sits
+  // beside the model name and so wears the model's vendor mark. The runtime
+  // itself is named by the run target control directly above.
+  const triggerDriverKind = selectedModel?.subProviderDriverKind ?? activeEntry?.driverKind ?? null;
+  const triggerShowsModelVendor =
+    activeEntry !== null && triggerDriverKind !== activeEntry.driverKind;
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -158,12 +165,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         }
       >
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          {activeEntry ? (
+          {selectedModel?.isOpenWeight ? (
+            <CodeXmlIcon className={cn("size-4 shrink-0", props.activeProviderIconClassName)} />
+          ) : activeEntry && triggerDriverKind ? (
             <ProviderInstanceIcon
-              driverKind={activeEntry.driverKind}
+              driverKind={triggerDriverKind}
               displayName={activeEntry.displayName}
               accentColor={activeEntry.accentColor}
-              showBadge={showInstanceBadge}
+              showBadge={showInstanceBadge && !triggerShowsModelVendor}
               className="size-4"
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
               indicatorBackground="var(--contrast-input)"

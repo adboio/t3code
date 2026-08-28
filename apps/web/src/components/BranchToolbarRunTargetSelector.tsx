@@ -1,8 +1,8 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-import { CloudIcon, MonitorIcon } from "lucide-react";
+import { MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
-import type { EnvironmentOption } from "./BranchToolbar.logic";
+import type { RunTargetOption } from "./BranchToolbar.logic";
+import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import {
   Select,
   SelectGroup,
@@ -13,32 +13,48 @@ import {
   SelectValue,
 } from "./ui/select";
 
-interface BranchToolbarEnvironmentSelectorProps {
+interface BranchToolbarRunTargetSelectorProps {
   envLocked: boolean;
-  environmentId: EnvironmentId;
-  availableEnvironments: readonly EnvironmentOption[];
-  // Absent when there is only one environment to show: the indicator still
-  // renders (as a static label) so remote projects are always identifiable.
-  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  value: string;
+  options: readonly RunTargetOption[];
+  // Absent once the thread has started: the control still renders as a
+  // static label so a cloud thread is identifiable at rest.
+  onRunTargetChange?: (option: RunTargetOption) => void;
 }
 
-export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
-  envLocked,
-  environmentId,
-  availableEnvironments,
-  onEnvironmentChange,
-}: BranchToolbarEnvironmentSelectorProps) {
-  const activeEnvironment = useMemo(() => {
-    return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
-  }, [availableEnvironments, environmentId]);
+/**
+ * The glyph for a run target. This machine gets the monitor; a cloud runtime
+ * carries its provider's own mark, so the two never read the same.
+ */
+function RunTargetIcon({ option }: { option: RunTargetOption | null }) {
+  if (option?.kind === "cloud") {
+    return (
+      <ProviderInstanceIcon
+        driverKind={option.driverKind}
+        displayName={option.label}
+        accentColor={option.accentColor}
+        className="size-3 shrink-0"
+        iconClassName="size-3"
+      />
+    );
+  }
+  return <MonitorIcon className="size-3 shrink-0" />;
+}
 
-  const environmentItems = useMemo(
-    () =>
-      availableEnvironments.map((env) => ({
-        value: env.environmentId,
-        label: env.label,
-      })),
-    [availableEnvironments],
+export const BranchToolbarRunTargetSelector = memo(function BranchToolbarRunTargetSelector({
+  envLocked,
+  value,
+  options,
+  onRunTargetChange,
+}: BranchToolbarRunTargetSelectorProps) {
+  const activeOption = useMemo(
+    () => options.find((option) => option.value === value) ?? null,
+    [options, value],
+  );
+
+  const selectItems = useMemo(
+    () => options.map((option) => ({ value: option.value, label: option.label })),
+    [options],
   );
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
@@ -46,17 +62,13 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   // the glass seam joining it to the composer assumes a fixed strip height, so
   // a shorter label would drag the seam out of line whenever this label is the
   // only thing in the strip.
-  if (envLocked || onEnvironmentChange === undefined) {
+  if (envLocked || onRunTargetChange === undefined) {
     return (
       <span
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs"
         data-composer-context-control
       >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
-        ) : (
-          <CloudIcon className="size-3 shrink-0" />
-        )}
+        <RunTargetIcon option={activeOption} />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
@@ -65,32 +77,33 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             data-composer-label-motion
             className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
           >
-            {activeEnvironment?.label ?? "Run on"}
+            {activeOption?.label ?? "Runs on"}
           </span>
         </span>
       </span>
     );
   }
 
+  const handleValueChange = (nextValue: string) => {
+    const next = options.find((option) => option.value === nextValue);
+    if (next) onRunTargetChange(next);
+  };
+
   return (
     <Select
       modal={false}
-      value={environmentId}
-      onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
-      items={environmentItems}
+      value={value}
+      onValueChange={(next) => handleValueChange(next as string)}
+      items={selectItems}
     >
       <SelectTrigger
         variant="ghost"
         size="xs"
         className="min-w-0 max-w-full font-medium"
-        aria-label="Run on"
+        aria-label="Runs on"
         data-composer-context-control
       >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
-        ) : (
-          <CloudIcon className="size-3 shrink-0" />
-        )}
+        <RunTargetIcon option={activeOption} />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
@@ -106,15 +119,11 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       <SelectPopup>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
-          {availableEnvironments.map((env) => (
-            <SelectItem key={env.environmentId} value={env.environmentId}>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
               <span className="inline-flex items-center gap-1.5">
-                {env.isPrimary ? (
-                  <MonitorIcon className="size-3" />
-                ) : (
-                  <CloudIcon className="size-3" />
-                )}
-                {env.label}
+                <RunTargetIcon option={option} />
+                {option.label}
               </span>
             </SelectItem>
           ))}

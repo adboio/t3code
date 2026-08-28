@@ -27,6 +27,8 @@ export type ModelEsque = {
   name: string;
   shortName?: string | undefined;
   subProvider?: string | undefined;
+  subProviderDriverKind?: ProviderDriverKind | undefined;
+  isOpenWeight?: boolean | undefined;
   isLegacy?: boolean | undefined;
 };
 

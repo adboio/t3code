@@ -62,6 +62,24 @@ export const PostHogCloudTask = Schema.Struct({
 });
 export type PostHogCloudTask = typeof PostHogCloudTask.Type;
 
+/**
+ * One entry from the PostHog LLM gateway's own `/v1/models`.
+ *
+ * The project API's `/tasks/models/` catalogue only reports models whose
+ * provider maps to a task runtime adapter (anthropic, openai), so the
+ * open-source models PostHog serves through the Claude harness — GLM, Kimi,
+ * DeepSeek — are reachable only from the gateway directly. Fields beyond
+ * `id` are optional because the gateway has added them over time.
+ */
+export const PostHogGatewayModel = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  owned_by: Schema.optional(Schema.String),
+  context_window: Schema.optional(Schema.Number),
+  /** False when the caller's plan does not entitle them to this model. */
+  allowed: Schema.optional(Schema.Boolean),
+});
+export type PostHogGatewayModel = typeof PostHogGatewayModel.Type;
+
 export const PostHogCloudModel = Schema.Struct({
   runtime_adapter: Schema.Literals(["claude", "codex"]),
   model: TrimmedNonEmptyString,

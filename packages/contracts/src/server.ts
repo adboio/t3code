@@ -66,9 +66,23 @@ export const ServerProviderModel = Schema.Struct({
   name: TrimmedNonEmptyString,
   shortName: Schema.optional(TrimmedNonEmptyString),
   subProvider: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Driver kind that actually authors this model, when it differs from the
+   * instance serving it. A remote runtime brokers other vendors' models, so
+   * the UI needs the model's own identity to label it — reading it back out
+   * of `subProvider`'s display string would be guesswork.
+   */
+  subProviderDriverKind: Schema.optional(ProviderDriverKind),
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /**
+   * Open-weight model a runtime brokers rather than a lab's own model — GLM,
+   * Kimi, DeepSeek. It has no first-party vendor mark to wear, and wearing
+   * its harness's mark would claim authorship that is not true, so the UI
+   * gives it a neutral one.
+   */
+  isOpenWeight: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;

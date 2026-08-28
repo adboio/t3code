@@ -47,6 +47,8 @@ type ModelPickerItem = {
   name: string;
   shortName?: string;
   subProvider?: string;
+  subProviderDriverKind?: ProviderDriverKind;
+  isOpenWeight?: boolean;
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
   instanceDisplayName: string;
@@ -221,6 +223,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           name: model.name,
           ...(model.shortName ? { shortName: model.shortName } : {}),
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
+          ...(model.subProviderDriverKind
+            ? { subProviderDriverKind: model.subProviderDriverKind }
+            : {}),
+          ...(model.isOpenWeight ? { isOpenWeight: true } : {}),
           ...(model.isLegacy ? { isLegacy: true } : {}),
           instanceId,
           driverKind: entry.driverKind,
@@ -265,7 +271,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider]);
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  // A rail of one is a rail that answers nothing: with the run target chosen
+  // outside the picker, a single-instance scope (every cloud runtime today)
+  // renders as a plain list instead.
+  const isSingleInstanceScope = sidebarInstanceEntries.length <= 1;
+  const showSidebar = !isSearching && !isSingleInstanceScope;
+  const soleInstanceId = isSingleInstanceScope
+    ? (sidebarInstanceEntries[0]?.instanceId ?? props.activeInstanceId)
+    : null;
+  // Favorites are unreachable without the rail, so a single-instance scope
+  // always lists that instance rather than stranding the user in an
+  // unswitchable favorites view.
+  const listInstanceId = soleInstanceId ?? selectedInstanceId;
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
@@ -351,34 +368,30 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
     if (props.lockedProvider !== null) {
       result = result.filter((m) => matchesLockedProvider(m));
-      if (selectedInstanceId === "favorites") {
-        result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
-      } else {
-        result = result.filter((m) => m.instanceId === selectedInstanceId);
-      }
-    } else if (selectedInstanceId === "favorites") {
+    }
+    if (listInstanceId === "favorites") {
       result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
     } else {
-      result = result.filter((m) => m.instanceId === selectedInstanceId);
+      result = result.filter((m) => m.instanceId === listInstanceId);
     }
 
     return sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
-      groupFavorites: selectedInstanceId !== "favorites",
-      instanceOrder: selectedInstanceId === "favorites" ? instanceOrder : [],
+      groupFavorites: listInstanceId !== "favorites",
+      instanceOrder: listInstanceId === "favorites" ? instanceOrder : [],
     });
   }, [
     favoritesSet,
     flatModels,
     instanceOrder,
+    listInstanceId,
     matchesLockedProvider,
     props.lockedProvider,
     searchQuery,
-    selectedInstanceId,
   ]);
 
   const legacySection = useMemo(() => {
-    if (isSearching || selectedInstanceId === "favorites") {
+    if (isSearching || listInstanceId === "favorites") {
       return null;
     }
     const currentModels = filteredModels.filter((model) => !model.isLegacy);
@@ -387,12 +400,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return null;
     }
     return {
-      key: modelPickerLegacySectionKey(selectedInstanceId),
+      key: modelPickerLegacySectionKey(listInstanceId),
       currentModels,
       legacyModels,
-      isExpanded: expandedLegacyInstances.has(selectedInstanceId),
+      isExpanded: expandedLegacyInstances.has(listInstanceId),
     };
-  }, [expandedLegacyInstances, filteredModels, isSearching, selectedInstanceId]);
+  }, [expandedLegacyInstances, filteredModels, isSearching, listInstanceId]);
 
   const visibleModels = useMemo(() => {
     if (!legacySection) {
@@ -543,8 +556,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
   const modelListExtraData = useMemo(
-    () => ({ favoritesSet, modelJumpLabelByKey }),
-    [favoritesSet, modelJumpLabelByKey],
+    () => ({ favoritesSet, modelJumpLabelByKey, isSingleInstanceScope }),
+    [favoritesSet, isSingleInstanceScope, modelJumpLabelByKey],
   );
 
   useEffect(() => {
@@ -605,7 +618,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         {/* Sidebar */}
         {showSidebar && (
           <ModelPickerSidebar
-            selectedInstanceId={selectedInstanceId}
+            selectedInstanceId={listInstanceId}
             onSelectInstance={handleSelectInstance}
             instanceEntries={sidebarInstanceEntries}
             showFavorites
@@ -749,6 +762,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     }
                     const disabledReason =
                       getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                    const providerLabel =
+                      model.subProvider && !model.subProviderDriverKind
+                        ? `${model.instanceDisplayName} · ${model.subProvider}`
+                        : model.instanceDisplayName;
                     return (
                       <ModelListRow
                         key={modelKey}
@@ -756,7 +773,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         model={model}
                         instanceId={model.instanceId}
                         driverKind={model.driverKind}
-                        providerDisplayName={model.instanceDisplayName}
+                        providerLabel={providerLabel}
                         providerAccentColor={model.instanceAccentColor}
                         isFavorite={favoritesSet.has(
                           providerModelKey(model.instanceId, model.slug),
@@ -764,7 +781,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         isSelected={
                           modelKey === modelPickerModelKey(props.activeInstanceId, props.model)
                         }
-                        showProvider
+                        // Every row in a single-instance scope would name
+                        // the same provider, which the trigger and the run
+                        // target already say. Only a list that can span
+                        // instances needs to attribute each row.
+                        showProvider={!isSingleInstanceScope}
                         preferShortName={!isLocked}
                         useTriggerLabel={false}
                         showNewBadge={isModelPickerNewModel(model.driverKind, model.slug)}
@@ -774,7 +795,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       />
                     );
                   }}
-                  estimatedItemSize={52}
+                  estimatedItemSize={isSingleInstanceScope ? 36 : 52}
                   drawDistance={480}
                   recycleItems
                   contentContainerClassName="pl-2 pr-px"

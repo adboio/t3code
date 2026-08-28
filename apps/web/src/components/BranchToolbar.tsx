@@ -2,7 +2,6 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
-  CloudIcon,
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
@@ -16,18 +15,20 @@ import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/e
 import { useIsMobile } from "../hooks/useMediaQuery";
 import {
   type EnvMode,
-  type EnvironmentOption,
+  type RunTargetOption,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
   resolveEffectiveEnvMode,
   resolveLockedWorkspaceLabel,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
-  shouldShowEnvironmentIndicator,
+  shouldShowRunTarget,
+  LOCAL_RUN_TARGET_VALUE,
 } from "./BranchToolbar.logic";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
-import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
+import { BranchToolbarRunTargetSelector } from "./BranchToolbarRunTargetSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -40,6 +41,8 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { GitHubIcon } from "./Icons";
 
 interface BranchToolbarProps {
   environmentId: EnvironmentId;
@@ -55,18 +58,21 @@ interface BranchToolbarProps {
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
-  availableEnvironments?: readonly EnvironmentOption[];
-  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  runTargetOptions?: readonly RunTargetOption[];
+  runTargetValue?: string;
+  onRunTargetChange?: (option: RunTargetOption) => void;
+  /** `owner/name` the cloud run receives, or null when none is resolvable. */
+  cloudRepositoryLabel?: string | null;
 }
 
 interface MobileRunContextSelectorProps {
   envLocked: boolean;
   envModeLocked: boolean;
-  environmentId: EnvironmentId;
-  availableEnvironments: readonly EnvironmentOption[] | undefined;
-  showEnvironmentPicker: boolean;
-  showEnvironmentIndicator: boolean;
-  onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
+  runTargetOptions: readonly RunTargetOption[];
+  runTargetValue: string;
+  canPickRunTarget: boolean;
+  showRunTarget: boolean;
+  onRunTargetChange: ((option: RunTargetOption) => void) | undefined;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
@@ -74,23 +80,42 @@ interface MobileRunContextSelectorProps {
   onUsePreviousWorktree: () => void;
 }
 
+/**
+ * Compact glyph for one run target. This machine keeps the monitor; a cloud
+ * runtime carries its provider's mark so the two never blur.
+ */
+function MobileRunTargetIcon({ option }: { option: RunTargetOption | null }) {
+  if (option?.kind === "cloud") {
+    return (
+      <ProviderInstanceIcon
+        driverKind={option.driverKind}
+        displayName={option.label}
+        accentColor={option.accentColor}
+        className="size-3 shrink-0 mx-0!"
+        iconClassName="size-3"
+      />
+    );
+  }
+  return <MonitorIcon className="size-3 shrink-0 mx-0!" />;
+}
+
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
   envLocked,
   envModeLocked,
-  environmentId,
-  availableEnvironments,
-  showEnvironmentPicker,
-  showEnvironmentIndicator,
-  onEnvironmentChange,
+  runTargetOptions,
+  runTargetValue,
+  canPickRunTarget,
+  showRunTarget,
+  onRunTargetChange,
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
   previousWorktreeLabel,
   onUsePreviousWorktree,
 }: MobileRunContextSelectorProps) {
-  const activeEnvironment = useMemo(
-    () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
-    [availableEnvironments, environmentId],
+  const activeRunTarget = useMemo(
+    () => runTargetOptions.find((option) => option.value === runTargetValue) ?? null,
+    [runTargetOptions, runTargetValue],
   );
   const WorkspaceIcon =
     effectiveEnvMode === "worktree"
@@ -104,12 +129,11 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       ? resolveEnvModeLabel("worktree")
       : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isLocked = envLocked || envModeLocked;
-  const EnvironmentIcon = activeEnvironment?.isPrimary ? MonitorIcon : CloudIcon;
-  const icon = showEnvironmentIndicator ? (
+  const icon = showRunTarget ? (
     // Button's base styles apply `-mx-0.5` to descendant SVGs, which eats 4px
     // out of whatever gap we set. mx-0! cancels that so gap-0.5 reads as 2px.
     <span className="inline-flex shrink-0 items-center gap-0.5">
-      <EnvironmentIcon className="size-3 shrink-0 mx-0!" />
+      <MobileRunTargetIcon option={activeRunTarget} />
       <WorkspaceIcon className="size-3 shrink-0 mx-0!" />
     </span>
   ) : (
@@ -119,7 +143,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     <>
       {icon}
       <span className="min-w-0 truncate">
-        {showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel}
+        {showRunTarget ? (activeRunTarget?.label ?? "Runs on") : workspaceLabel}
       </span>
     </>
   );
@@ -142,29 +166,25 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
       <MenuPopup align="start" side="top" className="w-64">
-        {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
+        {canPickRunTarget && onRunTargetChange ? (
           <>
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
               <MenuRadioGroup
-                value={environmentId}
-                onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
+                value={runTargetValue}
+                onValueChange={(value) => {
+                  const next = runTargetOptions.find((option) => option.value === value);
+                  if (next) onRunTargetChange(next);
+                }}
               >
-                {availableEnvironments.map((env) => {
-                  const Icon = env.isPrimary ? MonitorIcon : CloudIcon;
-                  return (
-                    <MenuRadioItem
-                      key={env.environmentId}
-                      disabled={envLocked}
-                      value={env.environmentId}
-                    >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <Icon className="size-3" />
-                        <span className="min-w-0 truncate">{env.label}</span>
-                      </span>
-                    </MenuRadioItem>
-                  );
-                })}
+                {runTargetOptions.map((option) => (
+                  <MenuRadioItem key={option.value} disabled={envLocked} value={option.value}>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <MobileRunTargetIcon option={option} />
+                      <span className="min-w-0 truncate">{option.label}</span>
+                    </span>
+                  </MenuRadioItem>
+                ))}
               </MenuRadioGroup>
             </MenuGroup>
             <MenuSeparator />
@@ -387,8 +407,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   envLocked,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
-  availableEnvironments,
-  onEnvironmentChange,
+  runTargetOptions,
+  runTargetValue,
+  onRunTargetChange,
+  cloudRepositoryLabel,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -450,15 +472,15 @@ export const BranchToolbar = memo(function BranchToolbar({
     });
   }, [activeProjectRef, draftId, previousWorktreeSeed, setDraftThreadContext, threadRef]);
 
-  const showEnvironmentPicker = Boolean(
-    availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
-  );
-  const activeEnvironmentOption =
-    availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: showEnvironmentPicker,
-  });
+  const resolvedRunTargetOptions = runTargetOptions ?? [];
+  const resolvedRunTargetValue = runTargetValue ?? LOCAL_RUN_TARGET_VALUE;
+  const activeRunTarget =
+    resolvedRunTargetOptions.find((option) => option.value === resolvedRunTargetValue) ?? null;
+  const showRunTarget = shouldShowRunTarget(resolvedRunTargetOptions);
+  const canPickRunTarget = Boolean(showRunTarget && onRunTargetChange);
+  // A cloud run has no checkout to name, so the strip trades workspace and
+  // branch for the repository the run will actually be handed.
+  const runsInCloud = activeRunTarget?.kind === "cloud";
   const isMobile = useIsMobile();
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
@@ -475,11 +497,11 @@ export const BranchToolbar = memo(function BranchToolbar({
         <MobileRunContextSelector
           envLocked={envLocked}
           envModeLocked={envModeLocked}
-          environmentId={environmentId}
-          availableEnvironments={availableEnvironments}
-          showEnvironmentPicker={showEnvironmentPicker}
-          showEnvironmentIndicator={showEnvironmentIndicator}
-          onEnvironmentChange={onEnvironmentChange}
+          runTargetOptions={resolvedRunTargetOptions}
+          runTargetValue={resolvedRunTargetValue}
+          canPickRunTarget={canPickRunTarget}
+          showRunTarget={showRunTarget}
+          onRunTargetChange={onRunTargetChange}
           effectiveEnvMode={effectiveEnvMode}
           activeWorktreePath={activeWorktreePath}
           onEnvModeChange={onEnvModeChange}
@@ -488,15 +510,15 @@ export const BranchToolbar = memo(function BranchToolbar({
         />
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-1">
-          {showEnvironmentIndicator && availableEnvironments && (
+          {showRunTarget && (
             <>
-              <BranchToolbarEnvironmentSelector
+              <BranchToolbarRunTargetSelector
                 envLocked={envLocked}
-                environmentId={environmentId}
-                availableEnvironments={availableEnvironments}
-                {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+                value={resolvedRunTargetValue}
+                options={resolvedRunTargetOptions}
+                {...(canPickRunTarget && onRunTargetChange ? { onRunTargetChange } : {})}
               />
-              {showGitControls ? (
+              {showGitControls || runsInCloud ? (
                 <Separator
                   orientation="vertical"
                   className="mx-0.5 h-3.5!"
@@ -514,6 +536,28 @@ export const BranchToolbar = memo(function BranchToolbar({
               previousWorktreeLabel={previousWorktreeLabel}
               onUsePreviousWorktree={onUsePreviousWorktree}
             />
+          ) : runsInCloud ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className="inline-flex h-7 min-w-0 items-center gap-1.5 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs"
+                    data-composer-context-control
+                    data-composer-cloud-repository={cloudRepositoryLabel ?? "none"}
+                  />
+                }
+              >
+                <GitHubIcon className="size-3 shrink-0" />
+                <span className="min-w-0 truncate">
+                  {cloudRepositoryLabel ?? "No linked repository"}
+                </span>
+              </TooltipTrigger>
+              <TooltipPopup side="top" align="start" className="max-w-64 text-balance leading-snug">
+                {cloudRepositoryLabel
+                  ? `The cloud run works on ${cloudRepositoryLabel}. It has no checkout on this machine.`
+                  : "This project has no GitHub remote, so a cloud run has no repository to work on. Add one, or pick a machine instead."}
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
         </div>
       )}

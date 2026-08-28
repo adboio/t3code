@@ -68,6 +68,7 @@ describe("PostHogCloudAdapter", () => {
     const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
     const posthog = PostHogCloudClient.of({
       listModels: unused,
+      listGatewayModels: unused,
       createTask: (input) =>
         Effect.sync(() => {
           createCalls.push(input);
@@ -301,6 +302,7 @@ describe("PostHogCloudAdapter", () => {
     const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
     const posthog = PostHogCloudClient.of({
       listModels: unused,
+      listGatewayModels: unused,
       createTask: unused,
       runTask: unused,
       getRun: () => Effect.succeed(cloudRun(runOneId, "in_progress")),
@@ -401,6 +403,7 @@ describe("PostHogCloudAdapter", () => {
     const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
     const posthog = PostHogCloudClient.of({
       listModels: unused,
+      listGatewayModels: unused,
       createTask: () =>
         Effect.sync(() => {
           createCalls += 1;
@@ -458,6 +461,7 @@ describe("PostHogCloudAdapter", () => {
     const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
     const posthog = PostHogCloudClient.of({
       listModels: unused,
+      listGatewayModels: unused,
       createTask: unused,
       runTask: (input) =>
         Effect.sync(() => {
@@ -517,6 +521,7 @@ describe("PostHogCloudAdapter", () => {
     const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
     const posthog = PostHogCloudClient.of({
       listModels: unused,
+      listGatewayModels: unused,
       createTask: unused,
       runTask: unused,
       getRun: () => Effect.succeed(cloudRun(runOneId, "in_progress")),
@@ -592,6 +597,7 @@ describe("PostHogCloudAdapter", () => {
         const frames = yield* Queue.unbounded<typeof frame>();
         const posthog = PostHogCloudClient.of({
           listModels: () => Effect.die(new Error("Unexpected PostHog client call")),
+          listGatewayModels: () => Effect.die(new Error("Unexpected PostHog client call")),
           createTask: () => Effect.die(new Error("Unexpected PostHog client call")),
           runTask: () => Effect.die(new Error("Unexpected PostHog client call")),
           getRun: () => Effect.succeed(currentRun),
@@ -659,6 +665,7 @@ describe("PostHogCloudAdapter", () => {
     } as const;
     const posthog = PostHogCloudClient.of({
       listModels: () => Effect.die(new Error("Unexpected PostHog client call")),
+      listGatewayModels: () => Effect.die(new Error("Unexpected PostHog client call")),
       createTask: () => Effect.die(new Error("Unexpected PostHog client call")),
       runTask: () => Effect.die(new Error("Unexpected PostHog client call")),
       getRun: () => Effect.succeed(cloudRun(runOneId, "completed")),
@@ -749,6 +756,7 @@ describe("PostHogCloudAdapter", () => {
     const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
     const posthog = PostHogCloudClient.of({
       listModels: unused,
+      listGatewayModels: unused,
       createTask: unused,
       runTask: unused,
       getRun: () => Effect.succeed(cloudRun(runOneId, "in_progress")),
@@ -806,6 +814,7 @@ describe("PostHogCloudAdapter", () => {
           const unused = () => Effect.die(new Error("Unexpected PostHog client call"));
           const posthog = PostHogCloudClient.of({
             listModels: unused,
+            listGatewayModels: unused,
             createTask: unused,
             runTask: (input) =>
               Effect.sync(() => {
