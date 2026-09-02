@@ -575,7 +575,16 @@ describe("PostHogCloudAdapter", () => {
     ).pipe(Effect.provide(NodeServices.layer));
   });
 
-  it.effect("does not replay a live frame again during authoritative log reconciliation", () => {
+  it.effect("ignores stream-only state during log reconciliation", () => {
+    const stateFrame = {
+      id: "run-state-1",
+      event: "message",
+      data: {
+        type: "task_run_state",
+        status: "in_progress",
+        updated_at: timestamp,
+      },
+    } as const;
     const frame = {
       id: "live-event-1",
       event: "message",
@@ -589,12 +598,15 @@ describe("PostHogCloudAdapter", () => {
         },
       },
     } as const;
+    const secondFrame = { ...frame, id: "live-event-2" } as const;
     let logCalls = 0;
     let currentRun = cloudRun(runOneId, "in_progress");
 
     return Effect.scoped(
       Effect.gen(function* () {
-        const frames = yield* Queue.unbounded<typeof frame>();
+        const frames = yield* Queue.unbounded<
+          typeof stateFrame | typeof frame | typeof secondFrame
+        >();
         const posthog = PostHogCloudClient.of({
           listModels: () => Effect.die(new Error("Unexpected PostHog client call")),
           listGatewayModels: () => Effect.die(new Error("Unexpected PostHog client call")),
@@ -609,9 +621,11 @@ describe("PostHogCloudAdapter", () => {
               logCalls += 1;
               if (logCalls === 1) return "";
               currentRun = cloudRun(runOneId, "completed");
-              return '{"type":"notification","notification":{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"hello"}}}}}';
+              const entry =
+                '{"type":"notification","notification":{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"hello"}}}}}';
+              return `${entry}\n${entry}`;
             }),
-          streamRun: () => Effect.succeed(Stream.fromQueue(frames).pipe(Stream.take(1))),
+          streamRun: () => Effect.succeed(Stream.fromQueue(frames).pipe(Stream.take(3))),
         });
         const adapter = yield* makePostHogCloudAdapter({
           instanceId: ProviderInstanceId.make("posthogCloud"),
@@ -644,10 +658,12 @@ describe("PostHogCloudAdapter", () => {
           },
           resumeCursor: { schemaVersion: 1, runId: runOneId },
         });
+        yield* Queue.offer(frames, stateFrame);
         yield* Queue.offer(frames, frame);
+        yield* Queue.offer(frames, secondFrame);
         yield* Deferred.await(completed);
 
-        assert.equal(events.filter((event) => event.type === "content.delta").length, 1);
+        assert.equal(events.filter((event) => event.type === "content.delta").length, 2);
         assert.equal(logCalls, 2);
       }),
     ).pipe(Effect.provide(NodeServices.layer));

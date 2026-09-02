@@ -170,6 +170,10 @@ function fingerprint(value: unknown): string {
   }
 }
 
+function isTaskRunState(value: unknown): boolean {
+  return record(value)?.type === "task_run_state";
+}
+
 function canonicalFingerprintValue(value: unknown, omitEnvelopeTimestamp = false): unknown {
   if (Array.isArray(value)) return value.map((entry) => canonicalFingerprintValue(entry));
   const candidate = record(value);
@@ -370,7 +374,7 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
     let streamAttempt = 0;
     let stalledMalformedPosition: number | undefined;
     let stalledMalformedPasses = 0;
-    const pendingStreamFingerprints: string[] = [];
+    const pendingStreamFingerprints = new Map<string, number>();
 
     const ingestFrame = (frame: { readonly data: unknown; readonly id?: string }) => {
       const frameId = frame.id;
@@ -384,9 +388,13 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
             frameId ? `sse:${runId}:${frameId}` : `stream:${runId}:${++anonymousStreamSequence}`,
           ).pipe(
             Effect.tap((ingested) =>
-              ingested
+              ingested && !isTaskRunState(frame.data)
                 ? Effect.sync(() => {
-                    pendingStreamFingerprints.push(fingerprint(frame.data));
+                    const key = fingerprint(frame.data);
+                    pendingStreamFingerprints.set(
+                      key,
+                      (pendingStreamFingerprints.get(key) ?? 0) + 1,
+                    );
                   })
                 : Effect.void,
             ),
@@ -424,8 +432,10 @@ export const makePostHogCloudAdapter = Effect.fn("makePostHogCloudAdapter")(func
         (entry) => {
           const key = fingerprint(entry.value);
           context.advanceCursor({ processedEntryCount: entry.position + 1 });
-          if (pendingStreamFingerprints[0] === key) {
-            pendingStreamFingerprints.shift();
+          const pendingCount = pendingStreamFingerprints.get(key) ?? 0;
+          if (pendingCount > 0) {
+            if (pendingCount === 1) pendingStreamFingerprints.delete(key);
+            else pendingStreamFingerprints.set(key, pendingCount - 1);
             return Effect.void;
           }
           return ingestEntry(context, entry.value, `log:${runId}:${entry.position}`).pipe(
