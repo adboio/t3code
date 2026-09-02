@@ -8,7 +8,7 @@ A t3 thread binds to one execution provider for its lifetime. A Cloud thread sto
 
 A PostHog Task is the durable remote conversation. A TaskRun is one sandbox lease for that Task. Active follow-up messages continue the current TaskRun. A follow-up after a terminal TaskRun creates a successor with `resume_from_run_id`; the t3 thread continues across both runs.
 
-`_posthog/turn_complete` completes a turn without completing the TaskRun. The composer working state follows the active turn, not merely a TaskRun whose status is `in_progress`.
+`_posthog/turn_complete` completes a turn without completing the TaskRun. The composer working state follows the active turn, not merely a TaskRun whose status is `in_progress`. `_posthog/run_started` describes the TaskRun and sandbox lifecycle, so the Cloud adapter does not project it as a running t3 session; only foreground or background turn activity owns that state.
 
 A message sent while a turn is active carries an explicit steer intent and the request-time turn owner through orchestration. The adapter reuses that t3 turn id and sends the Cloud command with `steer: true`; the request does not create pending-turn or checkpoint bookkeeping and does not publish another `turn.started`. The command id is the t3 message id, so PostHog can deduplicate a retried delivery.
 

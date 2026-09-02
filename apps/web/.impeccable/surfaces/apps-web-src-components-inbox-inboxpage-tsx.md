@@ -1,8 +1,8 @@
 ---
 version: 1
 slug: "apps-web-src-components-inbox-inboxpage-tsx"
-primary_target: "apps/web/src/components/inbox/InboxPage.tsx"
-related_targets: ["apps/web/src/components/reports/ReportHeader.tsx"]
+primary_target: "src/components/inbox/InboxPage.tsx"
+related_targets: ["src/components/reports/ReportHeader.tsx"]
 ---
 
 Scope: the PostHog report surfaces — the inbox list (`/inbox`, `/done`), its triage focus state, and the report detail route (`/inbox/$reportId`). Visitor mode: Operate.

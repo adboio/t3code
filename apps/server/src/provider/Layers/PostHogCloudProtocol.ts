@@ -531,7 +531,7 @@ export const mapPostHogCloudProtocolEntry = Effect.fn("mapPostHogCloudProtocolEn
       ];
     }
     case "run-started":
-      return [{ ...base, type: "session.state.changed", payload: { state: "running" } }];
+      return [];
     case "background-turn-started":
       return ensureImplicitTurn(true);
     case "background-turn-complete":

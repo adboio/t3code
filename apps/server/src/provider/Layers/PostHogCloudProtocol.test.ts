@@ -252,6 +252,30 @@ describe("PostHogCloudProtocol", () => {
       }),
   );
 
+  it.effect("keeps TaskRun startup separate from turn activity", () =>
+    Effect.gen(function* () {
+      const session = makeSession();
+      session.finishTurn(timestamp);
+      const events = yield* mapPostHogCloudProtocolEntry(
+        session,
+        notification("_posthog/run_started", {}),
+        (source, createdAt) =>
+          Effect.succeed({
+            eventId: EventId.make("run-started"),
+            provider: ProviderDriverKind.make("posthogCloud"),
+            providerInstanceId: ProviderInstanceId.make("posthogCloud"),
+            threadId,
+            createdAt: createdAt ?? timestamp,
+            raw: { source: "acp.posthog-cloud.extension", payload: source },
+          }),
+      );
+
+      assert.deepStrictEqual(events, []);
+      assert.equal(session.session.status, "ready");
+      assert.equal(session.activeTurnId, undefined);
+    }),
+  );
+
   it.effect("maps PostHog background turns to a complete visible T3 turn", () =>
     Effect.gen(function* () {
       const session = makeSession();
