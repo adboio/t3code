@@ -1,0 +1,15 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": ["apps/web/src/components/chat/MessagesTimeline.test.tsx"],
+        "createdAt": "2026-09-02T12:49:00.742Z",
+        "reason": "False positive: this test asserts that hostile user HTML containing an img tag remains inert source text and no img element renders."
+      }
+    ]
+  }
+}

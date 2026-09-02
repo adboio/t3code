@@ -1514,6 +1514,12 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
+  if (!row.canExpand) {
+    return (
+      <LiveActivityRow label={label} iconName={workEntryIconName(row.entry)} failed={failed} />
+    );
+  }
+
   return (
     <button
       type="button"

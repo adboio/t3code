@@ -193,6 +193,7 @@ export type MessagesTimelineRow =
       entry: WorkLogEntry;
       groupedEntries: WorkLogEntry[];
       groupId: string;
+      canExpand: boolean;
       expanded: boolean;
     }
   | {
@@ -427,6 +428,15 @@ function workGroupIdentity(timelineEntryId: string, entry: WorkLogEntry): string
 
 function workGroupId(timelineEntryId: string, entry: WorkLogEntry): string {
   return `work-group:${workGroupIdentity(timelineEntryId, entry)}`;
+}
+
+function liveWorkExpansionEntries(
+  groupedEntries: ReadonlyArray<WorkLogEntry>,
+  currentEntry: WorkLogEntry,
+): ReadonlyArray<WorkLogEntry> {
+  return currentEntry.sourceActivityKind === "task.progress"
+    ? groupedEntries.filter((entry) => entry.id !== currentEntry.id)
+    : groupedEntries;
 }
 
 export function resolveAssistantMessageCopyState({
@@ -760,14 +770,18 @@ export function deriveMessagesTimelineRows(input: {
     activeWorkAnchor && latestActiveToolEntry
       ? (() => {
           const groupId = workGroupId(activeWorkAnchor.id, activeWorkAnchor.entry);
+          const groupedEntries = visibleActiveToolEntries.map((entry) => entry.entry);
+          const canExpand =
+            liveWorkExpansionEntries(groupedEntries, latestActiveToolEntry.entry).length > 0;
           return {
             kind: "work-live" as const,
             id: `work-live:${workGroupIdentity(activeWorkAnchor.id, activeWorkAnchor.entry)}`,
             createdAt: activeWorkAnchor.createdAt,
             entry: latestActiveToolEntry.entry,
-            groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
+            groupedEntries,
             groupId,
-            expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            canExpand,
+            expanded: canExpand && (input.expandedWorkGroupIds?.has(groupId) ?? false),
           };
         })()
       : null;
@@ -783,14 +797,18 @@ export function deriveMessagesTimelineRows(input: {
     if (activeWorkRow === null) return;
     nextRows.push(activeWorkRow);
     if (!activeWorkRow.expanded) return;
-    for (const [entryIndex, workEntry] of activeWorkRow.groupedEntries.entries()) {
+    const hiddenEntries = liveWorkExpansionEntries(
+      activeWorkRow.groupedEntries,
+      activeWorkRow.entry,
+    );
+    for (const [entryIndex, workEntry] of hiddenEntries.entries()) {
       nextRows.push({
         kind: "work",
         id: workEntry.id,
         createdAt: workEntry.createdAt,
         groupedEntries: [workEntry],
         isExpandedToolGroupEntry: true,
-        isLastExpandedToolGroupEntry: entryIndex === activeWorkRow.groupedEntries.length - 1,
+        isLastExpandedToolGroupEntry: entryIndex === hiddenEntries.length - 1,
       });
     }
   };
@@ -862,8 +880,13 @@ export function deriveMessagesTimelineRows(input: {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (onlyToolEntries && activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
+          const hiddenEntries = liveWorkExpansionEntries(
+            visibleGroupedEntries,
+            latestActiveToolEntry,
+          );
+          const canExpand = hiddenEntries.length > 0;
+          const expanded = canExpand && (input.expandedWorkGroupIds?.has(groupId) ?? false);
           nextRows.push({
             kind: "work-live",
             id: `work-live:${workGroupIdentity(timelineEntry.id, timelineEntry.entry)}`,
@@ -871,17 +894,18 @@ export function deriveMessagesTimelineRows(input: {
             entry: latestActiveToolEntry,
             groupedEntries: visibleGroupedEntries,
             groupId,
+            canExpand,
             expanded,
           });
           if (expanded) {
-            for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
+            for (const [entryIndex, workEntry] of hiddenEntries.entries()) {
               nextRows.push({
                 kind: "work",
                 id: workEntry.id,
                 createdAt: workEntry.createdAt,
                 groupedEntries: [workEntry],
                 isExpandedToolGroupEntry: true,
-                isLastExpandedToolGroupEntry: entryIndex === visibleGroupedEntries.length - 1,
+                isLastExpandedToolGroupEntry: entryIndex === hiddenEntries.length - 1,
               });
             }
           }
@@ -1099,6 +1123,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.createdAt === bw.createdAt &&
         a.groupId === bw.groupId &&
+        a.canExpand === bw.canExpand &&
         a.expanded === bw.expanded &&
         Equal.equals(a.entry, bw.entry) &&
         Equal.equals(a.groupedEntries, bw.groupedEntries)

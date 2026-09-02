@@ -2438,24 +2438,15 @@ function ChatViewContent(props: ChatViewProps) {
   // all-pending freshly written plan labels the row, matching the chip and
   // the server's planProgress.
   const workingStepLabel = useMemo(() => {
-    if (activePlan && activePlan.turnId === (activeLatestTurn?.turnId ?? null)) {
-      return (
-        activePlan.steps.find((step) => step.status === "inProgress")?.step ??
-        activePlan.steps.find((step) => step.status === "pending")?.step ??
-        null
-      );
+    if (!activePlan || activePlan.turnId !== (activeLatestTurn?.turnId ?? null)) {
+      return null;
     }
-    if (!threadRunsRemotely) return null;
-    const progress = threadActivities.findLast(
-      (activity) =>
-        activity.kind === "task.progress" && activity.turnId === (activeLatestTurn?.turnId ?? null),
+    return (
+      activePlan.steps.find((step) => step.status === "inProgress")?.step ??
+      activePlan.steps.find((step) => step.status === "pending")?.step ??
+      null
     );
-    if (progress?.payload && typeof progress.payload === "object") {
-      const title = (progress.payload as { title?: unknown }).title;
-      if (typeof title === "string" && title.trim()) return title;
-    }
-    return null;
-  }, [activeLatestTurn?.turnId, activePlan, threadRunsRemotely, threadActivities]);
+  }, [activeLatestTurn?.turnId, activePlan]);
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&

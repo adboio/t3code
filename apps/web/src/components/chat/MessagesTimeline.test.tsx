@@ -1061,6 +1061,45 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Working for");
     expect(markup).toContain("Running pnpm");
     expect(markup).toContain("live-activity-focus");
+    expect(markup).toContain('aria-expanded="false"');
+  });
+
+  it("renders a singleton live task status without a disclosure", () => {
+    const turnId = TurnId.make("turn-cloud-startup");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-cloud-status",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-cloud-status",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              label: "Cloning repository",
+              tone: "thinking",
+              sourceActivityKind: "task.progress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Working for");
+    expect(markup).toContain("Cloning repository");
+    expect(markup).toContain("live-activity-focus");
+    expect(markup).not.toContain("aria-expanded");
   });
 
   it("scopes a live row failure to the tool named by the row", () => {

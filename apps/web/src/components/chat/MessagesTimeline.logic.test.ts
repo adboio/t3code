@@ -869,7 +869,7 @@ describe("deriveMessagesTimelineRows", () => {
   });
 
   it("keeps adjacent active tool calls in one replacing row", () => {
-    const rows = deriveMessagesTimelineRows({
+    const input = {
       timelineEntries: [
         {
           id: "completed-command-entry",
@@ -927,17 +927,32 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
-    });
+    } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+    const rows = deriveMessagesTimelineRows(input);
 
     expect(rows.map((row) => row.kind)).toEqual(["working", "work-live"]);
     expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
       entry: { id: "running-command" },
+      canExpand: true,
       groupedEntries: [
         { id: "completed-command" },
         { id: "completed-edit" },
         { id: "running-command" },
       ],
     });
+
+    const expandedRows = deriveMessagesTimelineRows({
+      ...input,
+      expandedWorkGroupIds: new Set(["work-group:completed-command-entry"]),
+    });
+
+    expect(expandedRows.map((row) => row.id)).toEqual([
+      "working-indicator-row",
+      "work-live:completed-command-entry",
+      "completed-command",
+      "completed-edit",
+      "running-command",
+    ]);
   });
 
   it("summarizes a tool run after commentary starts a new run", () => {
@@ -1181,7 +1196,7 @@ describe("deriveMessagesTimelineRows", () => {
   });
 
   it("keeps the latest completed tool call live while the turn is running", () => {
-    const rows = deriveMessagesTimelineRows({
+    const input = {
       timelineEntries: [
         {
           id: "latest-command-entry",
@@ -1209,13 +1224,67 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
-    });
+    } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+    const rows = deriveMessagesTimelineRows(input);
 
     expect(rows.map((row) => row.kind)).toEqual(["working", "work-live"]);
     expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
       entry: { id: "latest-command" },
+      canExpand: true,
+      expanded: false,
       groupedEntries: [{ id: "latest-command" }],
     });
+
+    const forcedExpandedRows = deriveMessagesTimelineRows({
+      ...input,
+      expandedWorkGroupIds: new Set(["work-group:latest-command-entry"]),
+    });
+
+    expect(forcedExpandedRows.map((row) => row.kind)).toEqual(["working", "work-live", "work"]);
+  });
+
+  it("does not expand a singleton live task status into the same status again", () => {
+    const input = {
+      timelineEntries: [
+        {
+          id: "cloud-status-entry",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "cloud-status",
+            createdAt: "2026-01-01T00:00:05Z",
+            turnId: "turn-1" as never,
+            label: "Cloning repository",
+            tone: "thinking" as const,
+            sourceActivityKind: "task.progress" as const,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    };
+
+    const rows = deriveMessagesTimelineRows(input);
+    expect(rows.map((row) => row.kind)).toEqual(["working", "work-live"]);
+    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
+      entry: { id: "cloud-status" },
+      canExpand: false,
+      expanded: false,
+    });
+
+    const forcedExpandedRows = deriveMessagesTimelineRows({
+      ...input,
+      expandedWorkGroupIds: new Set(["work-group:cloud-status-entry"]),
+    });
+    expect(forcedExpandedRows.map((row) => row.kind)).toEqual(["working", "work-live"]);
   });
 
   it("does not fold the session's running turn when latestTurn regresses", () => {
